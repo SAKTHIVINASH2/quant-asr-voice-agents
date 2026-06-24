@@ -1,0 +1,23 @@
+# Models & data (large, downloaded — never commit)
+models/
+data/
+*.gguf
+*.onnx
+*.onnx.json
+*.wav
+
+# Results (regenerated)
+results/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

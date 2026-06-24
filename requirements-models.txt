@@ -1,0 +1,11 @@
+# Real inference runtimes. Install when moving past --dummy mode.
+# CPU wheels; on Colab these install cleanly.
+
+llama-cpp-python>=0.3.2     # LLM (GGUF) + speculative decoding
+faster-whisper>=1.0.0       # CPU ASR (CTranslate2, INT8)
+piper-tts>=1.2.0            # CPU TTS  (alt: kokoro)
+soundfile>=0.12             # wav IO for ASR-noise round-trip
+onnxruntime>=1.16           # piper backend
+
+# Optional: API judge for MT-Bench scoring (RQ1). Use the latest Claude model.
+anthropic>=0.40

@@ -1,0 +1,8 @@
+# Core deps — enough to run everything in --dummy mode and do analysis.
+numpy>=1.24
+jiwer>=3.0          # word error rate for ASR-noise measurement
+tqdm>=4.65
+pyyaml>=6.0
+pandas>=2.0         # results aggregation
+
+# Heavy model runtimes live in requirements-models.txt so the skeleton installs fast.
