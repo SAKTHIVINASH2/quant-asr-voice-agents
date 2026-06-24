@@ -59,6 +59,30 @@ class DummyTTS(TTS):
                          n_sentences=len(sents))
 
 
+class Pyttsx3TTS(TTS):
+    """Windows-friendly TTS via the OS speech engine (SAPI5 on Windows).
+
+    Offline, no special wheels — the robust choice on native Windows where Piper's
+    phonemizer wheels are flaky. Note: pyttsx3 does not stream, so TTFA is
+    APPROXIMATED from the first sentence's text fraction (documented limitation).
+    total_s is measured honestly (single synthesis pass)."""
+
+    def __init__(self) -> None:
+        import pyttsx3  # lazy import
+        self.engine = pyttsx3.init()
+
+    def synthesize(self, text: str, out_path: str) -> TTSResult:
+        t0 = now()
+        sents = split_sentences(text) or [text]
+        self.engine.save_to_file(text, out_path)
+        self.engine.runAndWait()
+        total = now() - t0
+        # Approximate TTFA: pyttsx3 can't stream, so scale by first-sentence length.
+        frac = len(sents[0]) / max(1, len(text))
+        return TTSResult(out_path, ttfa_s=total * frac, total_s=total,
+                         n_sentences=len(sents))
+
+
 class PiperTTS(TTS):
     def __init__(self, voice_path: str) -> None:
         from piper.voice import PiperVoice  # lazy import
@@ -87,8 +111,17 @@ def _write_silence(path: str, seconds: float = 0.2, rate: int = 16000) -> None:
         wf.writeframes(b"\x00\x00" * n)
 
 
-def build_tts(dummy: bool, voice_path: str | None = None) -> TTS:
+def build_tts(dummy: bool, voice_path: str | None = None,
+              backend: str | None = None) -> TTS:
+    """backend: 'piper' (default, Linux/CPU), 'pyttsx3' (Windows SAPI5), or
+    'dummy'. Falls back to env VA_TTS_BACKEND. dummy=True overrides all."""
+    import os
     if dummy:
+        return DummyTTS()
+    backend = backend or os.environ.get("VA_TTS_BACKEND", "piper")
+    if backend == "pyttsx3":
+        return Pyttsx3TTS()
+    if backend == "dummy":
         return DummyTTS()
     from src import config
     vp = voice_path or str(config.PIPER_VOICE)
