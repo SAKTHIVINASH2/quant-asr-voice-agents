@@ -121,10 +121,10 @@ def eval_cell_raw(llm, tool_tasks, ifeval_tasks, wer, use_roundtrip,
 
 def run(dummy: bool, quants: list[str], seed: int = 0,
         limit: int | None = None, noise_levels: list[float] | None = None,
-        roundtrip: bool = False, seeds: int = 1) -> None:
+        roundtrip: bool = False, seeds: int = 1, skip_ifeval: bool = False) -> None:
     levels = noise_levels if noise_levels is not None else NOISE_LEVELS
     tool_tasks = load_tool_tasks()
-    ifeval_tasks = load_ifeval_tasks()
+    ifeval_tasks = [] if skip_ifeval else load_ifeval_tasks()
     catalog = build_catalog(tool_tasks)   # full catalog before limiting
     if limit:
         tool_tasks = tool_tasks[:limit]
@@ -257,10 +257,12 @@ def main() -> None:
     ap.add_argument("--seeds", type=int, default=1,
                     help="noise seeds to average per noisy cell (averages out which "
                          "words get corrupted; clean cells always use 1)")
+    ap.add_argument("--skip-ifeval", action="store_true",
+                    help="skip the (noisy, slow) IFEval metric; tool-calling only")
     args = ap.parse_args()
     quants = args.quants or (["dummyA", "dummyB"] if args.dummy else config.QUANT_LEVELS)
     run(args.dummy, quants, args.seed, args.limit, args.noise_levels, args.roundtrip,
-        args.seeds)
+        args.seeds, args.skip_ifeval)
 
 
 if __name__ == "__main__":
