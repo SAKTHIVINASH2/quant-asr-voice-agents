@@ -1,6 +1,8 @@
 # Models & data (large, downloaded — never commit)
 models/
 data/
+!data/tool_tasks.json      # curated task sets are source, keep them
+!data/ifeval_tasks.json
 *.gguf
 *.onnx
 *.onnx.json

@@ -1,134 +1,226 @@
-"""RQ1 — Does quantization break tool-calling + multi-turn coherence WORSE on
-ASR-noised input than on clean text?
+"""RQ1 — Does aggressive quantization break tool-calling and instruction-following
+WORSE under ASR-noised input than on clean text?
 
-Design (the 2x2x-sweep that is the paper's core):
-   for quant in QUANT_LEVELS:
-     for input_kind in {clean, asr-noised}:
-       score tool-calling (BFCL-style) + multi-turn quality (MT-Bench-style)
-   -> report the INTERACTION: degradation(noisy) - degradation(clean) per quant.
+The core novelty: measure quality as a function of BOTH quantization level AND
+input noise (clean text vs ASR-style errors), and report the INTERACTION —
+does noise amplify quantization damage as bits drop? No prior work (ACBench,
+Dutta, Lee) does this; all are clean-text only.
 
-The headline number is the *interaction* term: does noise amplify quantization
-damage? Prior work (ACBench, Dutta) only has the clean-text column.
+Design:
+   for quant in QUANTS:
+     for wer in NOISE_LEVELS:          # 0.0 = clean, 0.15, 0.30 = ASR-noised
+       tool-calling accuracy (function-selection, valid-JSON, exact)
+       instruction-following pass rate (IFEval-style)
+   -> interaction = degradation(noisy) grows as quant drops?
+
+Metrics per (quant, wer) cell:
+   - name_match : did the model pick the right function?  (intent recognition)
+   - valid_json : did it emit parseable JSON?               (format fidelity)
+   - exact      : function + all args correct               (full correctness)
+   - ifeval     : verifiable-instruction pass rate
 
 Run:  python -m src.experiments.rq1_quality --dummy
+      python -m src.experiments.rq1_quality --quants Q5_K_M Q4_K_M Q3_K_M Q2_K
 """
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import random
+from pathlib import Path
 
 from src import config
 from src.eval.asr_noise import synthetic_noise, roundtrip_noise
 from src.eval.metrics import append_jsonl, summarize
-from src.eval.scoring import ToolCall, score_tool_call, judge_response
+from src.eval.scoring import ToolCall, score_tool_call, check_instruction
 from src.pipeline.asr import build_asr
 from src.pipeline.llm import build_llm
 from src.pipeline.tts import build_tts
 
-# Tiny illustrative task set. TODO: load real BFCL v3 multi-turn (Base +
-# Missing-Parameter) and MT-Bench (80 Q x 2 turns). See data/README.
-TOOL_TASKS = [
-    {
-        "user": 'Book a table for 2 at "Trattoria Roma" at 7pm.',
-        "gold": ToolCall("book_restaurant",
-                         {"name": "Trattoria Roma", "party_size": 2, "time": "19:00"}),
-    },
-    {
-        "user": "What's the weather in Tokyo?",
-        "gold": ToolCall("get_weather", {"city": "Tokyo"}),
-    },
-]
-CHAT_TASKS = [
-    {"turn1": "Explain what a transformer is in one sentence.",
-     "turn2": "Now rewrite it for a 10-year-old."},
-]
+NOISE_LEVELS = [0.0, 0.15, 0.30]   # target WER: clean, moderate, heavy ASR noise
+
+TOOL_PROMPT = (
+    "You are a function-calling assistant. Respond with ONLY a JSON object "
+    'of the form {{"name": <function_name>, "arguments": {{<args>}}}}. '
+    "No other text.\nUser: {user}\nJSON:"
+)
 
 
-def _eval_input_kind(llm, tasks, chats, kind: str, quant: str,
-                     asr=None, tts=None, dummy=True) -> list[dict]:
-    rows = []
-
-    # --- Tool-calling ---
-    for t in tasks:
-        user = t["user"]
-        if kind == "noisy":
-            user = (synthetic_noise(user, target_wer=0.15).noisy if dummy
-                    else roundtrip_noise(user, tts, asr).noisy)
-        prompt = (f"You are a tool-calling assistant. Respond ONLY with JSON "
-                  f'{{"name": ..., "arguments": {{...}}}}.\nUser: {user}\nJSON:')
-        gen = llm.generate(prompt, max_tokens=128)
-        sc = score_tool_call(gen.text, t["gold"])
-        rows.append({"quant": quant, "input_kind": kind, "task": "tool",
-                     "exact": int(sc["exact"]), "valid_json": int(sc["valid_json"]),
-                     "name_match": int(sc["name_match"])})
-
-    # --- Multi-turn coherence (turn-1 vs turn-2 quality) ---
-    for c in chats:
-        q1 = c["turn1"]
-        if kind == "noisy":
-            q1 = (synthetic_noise(q1, target_wer=0.15).noisy if dummy
-                  else roundtrip_noise(q1, tts, asr).noisy)
-        a1 = llm.generate(f"User: {q1}\nAssistant:", max_tokens=96).text
-        s1 = judge_response(q1, a1, turn=1, model=config.JUDGE_MODEL, dummy=dummy)
-        q2 = c["turn2"]
-        a2 = llm.generate(f"User: {q1}\nAssistant: {a1}\nUser: {q2}\nAssistant:",
-                          max_tokens=96).text
-        s2 = judge_response(q2, a2, turn=2, model=config.JUDGE_MODEL, dummy=dummy)
-        rows.append({"quant": quant, "input_kind": kind, "task": "chat",
-                     "turn1_score": s1, "turn2_score": s2,
-                     "turn_drop": s1 - s2})
-    return rows
+# --------------------------------------------------------------------------- #
+# Data loading                                                                #
+# --------------------------------------------------------------------------- #
+def load_tool_tasks() -> list[dict]:
+    p = config.DATA_DIR / "tool_tasks.json"
+    if p.exists():
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        return [{"user": t["user"],
+                 "gold": ToolCall(t["gold"]["name"], t["gold"].get("arguments", {}))}
+                for t in raw]
+    return [{"user": "What's the weather in Tokyo?",
+             "gold": ToolCall("get_weather", {"city": "Tokyo"})}]
 
 
-def run(dummy: bool, quants: list[str]) -> None:
+def load_ifeval_tasks() -> list[dict]:
+    p = config.DATA_DIR / "ifeval_tasks.json"
+    if p.exists():
+        return json.loads(p.read_text(encoding="utf-8"))
+    return [{"prompt": "Describe coffee in at least 20 words.",
+             "instruction": {"type": "min_words", "n": 20}}]
+
+
+# --------------------------------------------------------------------------- #
+# Noise application                                                           #
+# --------------------------------------------------------------------------- #
+def noisify(text: str, wer: float, dummy: bool, asr, tts, rng) -> str:
+    if wer <= 0:
+        return text
+    if dummy or asr is None:
+        return synthetic_noise(text, target_wer=wer, rng=rng).noisy
+    # real ASR round-trip ignores the exact wer target (uses real TTS->ASR errors)
+    return roundtrip_noise(text, tts, asr).noisy
+
+
+# --------------------------------------------------------------------------- #
+# Evaluation                                                                  #
+# --------------------------------------------------------------------------- #
+def eval_cell(llm, tool_tasks, ifeval_tasks, quant, wer, dummy, asr, tts, rng) -> dict:
+    tool_scores = {"name_match": [], "valid_json": [], "exact": []}
+    for t in tool_tasks:
+        user = noisify(t["user"], wer, dummy, asr, tts, rng)
+        out = llm.generate(TOOL_PROMPT.format(user=user), max_tokens=96).text
+        sc = score_tool_call(out, t["gold"])
+        for k in tool_scores:
+            tool_scores[k].append(int(sc[k]))
+
+    ifeval_pass = []
+    for t in ifeval_tasks:
+        prompt = noisify(t["prompt"], wer, dummy, asr, tts, rng)
+        out = llm.generate(prompt, max_tokens=160).text
+        ifeval_pass.append(int(check_instruction(out, t["instruction"])))
+
+    def mean(xs):
+        return sum(xs) / len(xs) if xs else float("nan")
+
+    return {
+        "quant": quant, "wer": wer,
+        "n_tool": len(tool_tasks), "n_ifeval": len(ifeval_tasks),
+        "name_match": mean(tool_scores["name_match"]),
+        "valid_json": mean(tool_scores["valid_json"]),
+        "exact": mean(tool_scores["exact"]),
+        "ifeval": mean(ifeval_pass),
+    }
+
+
+def run(dummy: bool, quants: list[str], seed: int = 0,
+        limit: int | None = None, noise_levels: list[float] | None = None) -> None:
+    rng = random.Random(seed)
+    levels = noise_levels if noise_levels is not None else NOISE_LEVELS
+    tool_tasks = load_tool_tasks()
+    ifeval_tasks = load_ifeval_tasks()
+    if limit:
+        tool_tasks = tool_tasks[:limit]
+        ifeval_tasks = ifeval_tasks[:limit]
     asr = build_asr(dummy) if not dummy else None
-    tts = build_tts(dummy)  # needed for roundtrip noise in real mode
+    tts = build_tts(dummy)
     results_path = config.RESULTS_DIR / f"rq1_quality_{'dummy' if dummy else 'real'}.jsonl"
+    results_path.unlink(missing_ok=True)
 
-    all_rows = []
+    cells = []
     for quant in quants:
         mp = None if dummy else str(config.target_spec(quant).path)
         llm = build_llm(dummy, model_path=mp)
-        for kind in ("clean", "noisy"):
-            rows = _eval_input_kind(llm, TOOL_TASKS, CHAT_TASKS, kind, quant,
-                                    asr=asr, tts=tts, dummy=dummy)
-            for r in rows:
-                append_jsonl(r, results_path)
-            all_rows += rows
+        for wer in levels:
+            cell = eval_cell(llm, tool_tasks, ifeval_tasks, quant, wer,
+                             dummy, asr, tts, rng)
+            append_jsonl(cell, results_path)
+            cells.append(cell)
+            print(f"  {quant:8s} wer={wer:.2f}  name_match={cell['name_match']:.2f} "
+                  f"valid_json={cell['valid_json']:.2f} exact={cell['exact']:.2f} "
+                  f"ifeval={cell['ifeval']:.2f}")
         llm.close()
-    _report(all_rows)
+
+    _report(cells)
+    _plot(cells)
 
 
-def _report(rows: list[dict]) -> None:
-    print("\n=== RQ1: quantization x input-noise interaction ===")
-    quants = sorted({r["quant"] for r in rows})
-    print(f"{'quant':10s} {'tool_exact(clean)':>17s} {'tool_exact(noisy)':>17s} "
-          f"{'Δ(noise)':>9s} {'turn_drop(clean)':>16s} {'turn_drop(noisy)':>16s}")
+# --------------------------------------------------------------------------- #
+# Reporting                                                                   #
+# --------------------------------------------------------------------------- #
+def _report(cells: list[dict]) -> None:
+    quants = []
+    for c in cells:
+        if c["quant"] not in quants:
+            quants.append(c["quant"])
+    print("\n=== RQ1: quantization × ASR-noise interaction ===")
+    print("  (interaction = how much MORE noise hurts as bits drop)\n")
+    print(f"{'quant':8s} {'metric':11s} {'clean':>7s} {'noisy':>7s} "
+          f"{'Δ(noise)':>9s}")
+    interaction = {}
     for q in quants:
-        def tool_acc(kind):
-            xs = [r["exact"] for r in rows if r["quant"] == q
-                  and r["task"] == "tool" and r["input_kind"] == kind]
-            return sum(xs) / len(xs) if xs else float("nan")
+        clean = next((c for c in cells if c["quant"] == q and c["wer"] == 0.0), None)
+        noisy = max((c for c in cells if c["quant"] == q and c["wer"] > 0),
+                    key=lambda c: c["wer"], default=None)
+        if not clean or not noisy:
+            continue
+        for metric in ("name_match", "valid_json", "exact", "ifeval"):
+            d = clean[metric] - noisy[metric]
+            interaction.setdefault(metric, []).append((q, d))
+            print(f"{q:8s} {metric:11s} {clean[metric]:7.2f} {noisy[metric]:7.2f} "
+                  f"{d:9.2f}")
+        print()
+    # The headline: does Δ(noise) grow as quant drops?
+    print("  INTERACTION CHECK — Δ(noise) by quant (should grow if low-bit models")
+    print("  are more fragile to ASR noise):")
+    for metric, pairs in interaction.items():
+        seq = "  ".join(f"{q}:{d:+.2f}" for q, d in pairs)
+        print(f"    {metric:11s} {seq}")
+    print("\n  (dummy numbers are placeholders — run with real GGUF models.)")
 
-        def turn_drop(kind):
-            xs = [r["turn_drop"] for r in rows if r["quant"] == q
-                  and r["task"] == "chat" and r["input_kind"] == kind]
-            return summarize(xs)["mean"] if xs else float("nan")
 
-        tc, tn = tool_acc("clean"), tool_acc("noisy")
-        print(f"{q:10s} {tc:17.2f} {tn:17.2f} {tc - tn:9.2f} "
-              f"{turn_drop('clean'):16.2f} {turn_drop('noisy'):16.2f}")
-    print("\n  The INTERACTION term Δ(noise) growing as quant drops = RQ1's core finding.")
-    print("  (dummy numbers are placeholders — wire real models + BFCL/MT-Bench.)")
+def _plot(cells: list[dict]) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as e:                       # noqa: BLE001
+        print(f"(plot skipped: {e})")
+        return
+    quants = []
+    for c in cells:
+        if c["quant"] not in quants:
+            quants.append(c["quant"])
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    for wer in sorted({c["wer"] for c in cells}):
+        ys = [next((c["name_match"] for c in cells
+                    if c["quant"] == q and c["wer"] == wer), float("nan"))
+              for q in quants]
+        ax.plot(quants, ys, marker="o",
+                label=f"clean" if wer == 0 else f"ASR noise (wer={wer})")
+    ax.set_ylabel("tool-call function-selection accuracy")
+    ax.set_xlabel("quantization (more aggressive →)")
+    ax.set_title("RQ1: tool-calling accuracy vs quant, clean vs ASR-noised\n"
+                 "widening gap at low bits = the interaction effect")
+    ax.legend()
+    ax.set_ylim(0, 1)
+    plt.tight_layout()
+    out = config.RESULTS_DIR / "rq1_interaction.png"
+    plt.savefig(out, dpi=130)
+    print(f"wrote {out}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dummy", action="store_true")
-    ap.add_argument("--quants", nargs="*", default=None,
-                    help="quant levels to sweep (default: config.QUANT_LEVELS)")
+    ap.add_argument("--quants", nargs="*", default=None)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--limit", type=int, default=None,
+                    help="use only the first N tasks of each set (faster first pass)")
+    ap.add_argument("--noise-levels", nargs="*", type=float, default=None,
+                    help="override WER levels, e.g. 0.0 0.3 for a quick 2-point sweep")
     args = ap.parse_args()
     quants = args.quants or (["dummyA", "dummyB"] if args.dummy else config.QUANT_LEVELS)
-    run(args.dummy, quants)
+    run(args.dummy, quants, args.seed, args.limit, args.noise_levels)
 
 
 if __name__ == "__main__":
