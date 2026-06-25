@@ -22,13 +22,49 @@ from src.pipeline.llm import build_llm
 from src.pipeline.tts import build_tts
 from src.pipeline.voice_agent import VoiceAgent
 
-# A few representative user turns. TODO: replace with a real spoken-dialogue set.
+# Representative voice-assistant turns, varied in type and length (commands,
+# questions, tool-invoking requests, info lookups). ~30 prompts so --n-turns can
+# go meaningfully higher than the old 5. TODO: swap for a real spoken-dialogue
+# corpus (e.g. SpokenWOZ / MultiWOZ utterances) for the final paper.
 SAMPLE_TURNS = [
+    # short commands
+    "Set a timer for ten minutes.",
+    "Turn off the living room lights.",
+    "Play some jazz music.",
+    "Cancel my 3pm meeting.",
+    "Mute the volume.",
+    # info questions
     "What's the weather like in Paris today?",
-    "Book me a table for two at an Italian restaurant tonight.",
-    "Remind me to call the dentist tomorrow morning.",
     "How many ounces are in a liter?",
-    "Cancel my 3pm meeting and let the team know.",
+    "Who won the World Cup in 2022?",
+    "What's the capital of Australia?",
+    "How far is the moon from the earth?",
+    # reminders / calendar
+    "Remind me to call the dentist tomorrow morning.",
+    "Add a meeting with Sarah on Friday at 2pm.",
+    "What's on my calendar for tomorrow?",
+    "Remind me to take my medication every night at nine.",
+    "Move my 10am call to the afternoon.",
+    # bookings / multi-clause
+    "Book me a table for two at an Italian restaurant tonight.",
+    "Find a flight from Chennai to Singapore next Monday morning.",
+    "Order a large pepperoni pizza and a side of garlic bread.",
+    "Schedule a cab to the airport for 6am tomorrow.",
+    "Reserve a hotel room in Goa for this weekend under five thousand rupees.",
+    # messaging / actions with notification
+    "Cancel my 3pm meeting and let the team know I'm running late.",
+    "Text Mom that I'll be home by eight.",
+    "Send an email to my manager asking for tomorrow off.",
+    "Share my location with Dad.",
+    # conversions / math / units
+    "Convert 75 degrees Fahrenheit to Celsius.",
+    "What's 18 percent of 240?",
+    "How many tablespoons are in half a cup?",
+    # general / longer
+    "Explain what machine learning is in simple terms.",
+    "Give me a recipe for a quick vegetable stir fry.",
+    "Summarize today's top technology news in a few sentences.",
+    "What should I pack for a three day trip to a cold city?",
 ]
 
 
