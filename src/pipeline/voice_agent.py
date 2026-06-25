@@ -30,6 +30,13 @@ class TurnResult:
     gen: GenResult = field(repr=False, default=None)
 
     def as_row(self) -> dict:
+        n_tok = self.gen.n_tokens if self.gen else None
+        # Per-token decode speed is the length-independent metric for comparing
+        # quant levels (raw decode_s conflates speed with response length).
+        toks_per_s = (n_tok / self.llm_decode_s
+                      if n_tok and self.llm_decode_s > 0 else None)
+        ms_per_tok = (self.llm_decode_s * 1000 / n_tok
+                      if n_tok else None)
         return {
             "asr_s": self.asr_s,
             "llm_ttft_s": self.llm_ttft_s,
@@ -39,7 +46,9 @@ class TurnResult:
             "total_s": self.total_s,
             "ttft_s": self.ttft_s,
             "ttfa_s": self.ttfa_s,
-            "n_tokens": self.gen.n_tokens if self.gen else None,
+            "n_tokens": n_tok,
+            "toks_per_s": toks_per_s,
+            "ms_per_tok": ms_per_tok,
         }
 
 

@@ -40,7 +40,8 @@ def make_audio(text: str, tts) -> str:
     return wav
 
 
-def run(dummy: bool, quant: str, model_path: str | None, n_turns: int) -> None:
+def run(dummy: bool, quant: str, model_path: str | None, n_turns: int,
+        max_tokens: int = 128) -> None:
     asr = build_asr(dummy)
     tts = build_tts(dummy)
     mp = model_path or (None if dummy else str(config.target_spec(quant).path))
@@ -51,7 +52,7 @@ def run(dummy: bool, quant: str, model_path: str | None, n_turns: int) -> None:
     rows = []
     for text in SAMPLE_TURNS[:n_turns]:
         wav = make_audio(text, tts)
-        turn = agent.run_turn(wav)
+        turn = agent.run_turn(wav, max_tokens=max_tokens)
         row = {"quant": "dummy" if dummy else quant, "turn_text": text, **turn.as_row()}
         rows.append(row)
         append_jsonl(row, results_path)
@@ -74,6 +75,12 @@ def _report(rows: list[dict], label: str) -> None:
     print(f"  {'total_s':14s} mean={total['mean']*1000:7.1f} ms")
     print(f"  TTFT           mean={ttft['mean']*1000:7.1f} ms")
     print(f"  TTFA           mean={ttfa['mean']*1000:7.1f} ms")
+    # Length-independent decode speed — the right metric for comparing quants.
+    tps = summarize([r.get("toks_per_s") for r in rows])
+    ntok = summarize([r.get("n_tokens") for r in rows])
+    if tps.get("n"):
+        print(f"  decode speed   mean={tps['mean']:7.1f} tok/s  "
+              f"({1000/tps['mean']:.1f} ms/tok)   avg {ntok['mean']:.0f} tokens/response")
 
     dominant = max(means, key=means.get)
     share = means[dominant] / sum(means.values()) * 100
@@ -91,8 +98,10 @@ def main() -> None:
     ap.add_argument("--quant", default="Q4_K_M", help="quant level (real mode)")
     ap.add_argument("--model-path", default=None, help="override GGUF path")
     ap.add_argument("--n-turns", type=int, default=5)
+    ap.add_argument("--max-tokens", type=int, default=128,
+                    help="pin response length for apples-to-apples quant comparison")
     args = ap.parse_args()
-    run(args.dummy, args.quant, args.model_path, args.n_turns)
+    run(args.dummy, args.quant, args.model_path, args.n_turns, args.max_tokens)
 
 
 if __name__ == "__main__":

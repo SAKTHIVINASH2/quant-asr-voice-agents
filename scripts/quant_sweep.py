@@ -62,6 +62,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quants", nargs="*", default=DEFAULT_QUANTS)
     ap.add_argument("--n-turns", type=int, default=5)
+    ap.add_argument("--max-tokens", type=int, default=128,
+                    help="pin response length so decode time is comparable across quants")
     ap.add_argument("--dummy", action="store_true")
     ap.add_argument("--tts", default=None, help="override VA_TTS_BACKEND (e.g. pyttsx3)")
     args = ap.parse_args()
@@ -78,10 +80,12 @@ def main() -> None:
             if mp is None:
                 continue
         # fresh results file per quant is handled inside rq2.run
-        rq2.run(dummy=args.dummy, quant=q, model_path=mp, n_turns=args.n_turns)
+        rq2.run(dummy=args.dummy, quant=q, model_path=mp, n_turns=args.n_turns,
+                max_tokens=args.max_tokens)
         rows = read_rows(q, args.dummy)
         if not rows:
             continue
+        tps = [r.get("toks_per_s") for r in rows if r.get("toks_per_s")]
         summary_rows.append({
             "quant": q,
             "asr_ms": summarize([r["asr_s"] for r in rows])["mean"] * 1000,
@@ -89,6 +93,9 @@ def main() -> None:
             "tts_ms": summarize([r["tts_total_s"] for r in rows])["mean"] * 1000,
             "ttfa_ms": summarize([r["ttfa_s"] for r in rows])["mean"] * 1000,
             "total_ms": summarize([r["total_s"] for r in rows])["mean"] * 1000,
+            "toks_per_s": summarize(tps)["mean"] if tps else float("nan"),
+            "ms_per_tok": (1000 / summarize(tps)["mean"]) if tps else float("nan"),
+            "avg_tokens": summarize([r.get("n_tokens") for r in rows])["mean"],
         })
 
     _write_and_plot(summary_rows, args.dummy)
@@ -106,11 +113,14 @@ def _write_and_plot(rows: list[dict], dummy: bool) -> None:
         w.writerows(rows)
     print(f"\nwrote {out_csv}")
 
-    print(f"\n{'quant':10s} {'ASR':>8s} {'LLM':>9s} {'TTS':>7s} {'TTFA':>8s} {'total':>9s}  budget")
+    print(f"\n{'quant':10s} {'tok/s':>6s} {'ms/tok':>7s} {'ASR':>7s} {'TTS':>6s} "
+          f"{'TTFA':>7s}  budget   (tok/s = the quant-comparison metric)")
     for r in rows:
         flag = "OVER" if r["ttfa_ms"] > config.BUDGET_BROKEN_S * 1000 else "ok"
-        print(f"{r['quant']:10s} {r['asr_ms']:7.0f}m {r['llm_ms']:8.0f}m "
-              f"{r['tts_ms']:6.0f}m {r['ttfa_ms']:7.0f}m {r['total_ms']:8.0f}m  {flag}")
+        print(f"{r['quant']:10s} {r['toks_per_s']:6.1f} {r['ms_per_tok']:7.1f} "
+              f"{r['asr_ms']:6.0f}m {r['tts_ms']:5.0f}m {r['ttfa_ms']:6.0f}m  {flag}")
+    print("  NOTE: compare quants by tok/s (length-independent). Raw decode time / "
+          "TTFA still vary with\n        response length unless --max-tokens pins it.")
 
     try:
         import matplotlib
@@ -134,6 +144,21 @@ def _write_and_plot(rows: list[dict], dummy: bool) -> None:
         out_png = config.RESULTS_DIR / "rq2_quant_sweep.png"
         plt.savefig(out_png, dpi=130)
         print(f"wrote {out_png}")
+
+        # Second figure: decode speed (tok/s) — the length-independent quant metric.
+        tps = [r["toks_per_s"] for r in rows]
+        if any(v == v for v in tps):  # not all NaN
+            fig2, ax2 = plt.subplots(figsize=(6, 4))
+            ax2.bar(labels, tps, color="#C44E52")
+            ax2.set_ylabel("decode speed (tokens/sec)")
+            ax2.set_title("RQ2: decode speed vs quantization (CPU, Qwen2.5-3B)")
+            for i, v in enumerate(tps):
+                if v == v:
+                    ax2.text(i, v, f"{v:.1f}", ha="center", va="bottom")
+            plt.tight_layout()
+            out_png2 = config.RESULTS_DIR / "rq2_quant_speed.png"
+            plt.savefig(out_png2, dpi=130)
+            print(f"wrote {out_png2}")
     except Exception as e:                    # noqa: BLE001
         print(f"(plot skipped: {e})")
 
