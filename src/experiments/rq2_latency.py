@@ -49,6 +49,7 @@ def run(dummy: bool, quant: str, model_path: str | None, n_turns: int,
     agent = VoiceAgent(asr, llm, tts)
 
     results_path = config.RESULTS_DIR / f"rq2_latency_{'dummy' if dummy else quant}.jsonl"
+    results_path.unlink(missing_ok=True)   # start fresh — don't append to a prior run
     rows = []
     for text in SAMPLE_TURNS[:n_turns]:
         wav = make_audio(text, tts)
