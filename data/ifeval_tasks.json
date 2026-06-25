@@ -1,0 +1,17 @@
+[
+  {"prompt": "Describe your ideal vacation in at least 40 words.", "instruction": {"type": "min_words", "n": 40}},
+  {"prompt": "Explain photosynthesis in 25 words or fewer.", "instruction": {"type": "max_words", "n": 25}},
+  {"prompt": "Write a short note about coffee and mention the word 'aroma'.", "instruction": {"type": "keyword", "word": "aroma"}},
+  {"prompt": "List three benefits of exercise; make sure to mention 'energy'.", "instruction": {"type": "keyword", "word": "energy"}},
+  {"prompt": "Return a JSON object with keys name and age for a person named Alex aged 30.", "instruction": {"type": "json"}},
+  {"prompt": "Give the user profile as a JSON object with fields city and country.", "instruction": {"type": "json"}},
+  {"prompt": "Write a one-sentence motivational quote that ends with the word 'today'.", "instruction": {"type": "ends_with", "suffix": "today"}},
+  {"prompt": "Compose a friendly greeting that ends with an exclamation mark.", "instruction": {"type": "ends_with", "suffix": "!"}},
+  {"prompt": "Summarize the water cycle using at least 50 words.", "instruction": {"type": "min_words", "n": 50}},
+  {"prompt": "Give a very brief definition of gravity in no more than 15 words.", "instruction": {"type": "max_words", "n": 15}},
+  {"prompt": "Recommend a book and include the word 'recommend' in your answer.", "instruction": {"type": "keyword", "word": "recommend"}},
+  {"prompt": "Provide configuration as a JSON object with keys host and port.", "instruction": {"type": "json"}},
+  {"prompt": "Write a closing line for an email that ends with 'regards'.", "instruction": {"type": "ends_with", "suffix": "regards"}},
+  {"prompt": "Explain why sleep matters, in at least 35 words.", "instruction": {"type": "min_words", "n": 35}},
+  {"prompt": "Describe a sunset and use the word 'horizon'.", "instruction": {"type": "keyword", "word": "horizon"}}
+]

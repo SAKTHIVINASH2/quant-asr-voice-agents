@@ -1,6 +1,6 @@
 # Models & data (large, downloaded — never commit)
 models/
-data/
+data/*                     # ignore data CONTENTS but allow re-including files below
 !data/tool_tasks.json      # curated task sets are source, keep them
 !data/ifeval_tasks.json
 *.gguf
