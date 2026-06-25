@@ -41,28 +41,44 @@ class ModelSpec:
 
 
 # --- Model registry ----------------------------------------------------------
-# TODO: fill in real GGUF paths (see scripts/download_models.sh). The {quant}
-# placeholder is filled per level. Target models = the LLM under test.
+# Target models = the LLM under test. Default matches what scripts/quant_sweep.py
+# downloads (Qwen2.5-3B). Set VA_TARGET_GGUF_TMPL to override the filename pattern.
 TARGET_MODEL_TEMPLATE = {
-    "name": "Qwen2.5-7B-Instruct",
-    "gguf_glob": str(MODELS_DIR / "qwen2.5-7b-instruct-{quant}.gguf"),
+    "name": "Qwen2.5-3B-Instruct",
+    "gguf_glob": os.environ.get(
+        "VA_TARGET_GGUF_TMPL",
+        str(MODELS_DIR / "Qwen2.5-3B-Instruct-{quant}.gguf")),
 }
 
 # Draft models for RQ3 speculative decoding (small, also swept over quant).
 DRAFT_MODEL_TEMPLATE = {
     "name": "Qwen2.5-0.5B-Instruct",
-    "gguf_glob": str(MODELS_DIR / "qwen2.5-0.5b-instruct-{quant}.gguf"),
+    "gguf_glob": os.environ.get(
+        "VA_DRAFT_GGUF_TMPL",
+        str(MODELS_DIR / "Qwen2.5-0.5B-Instruct-{quant}.gguf")),
 }
 
 
+def _resolve_gguf(template: str, quant: str, exclude: str | None = None) -> Path | None:
+    """Find the GGUF for `quant`: try the exact template, then glob the models
+    dir for any *<quant>.gguf (excluding `exclude`, e.g. the draft model)."""
+    p = Path(template.format(quant=quant))
+    if p.exists():
+        return p
+    cands = [g for g in MODELS_DIR.glob(f"*{quant}.gguf")
+             if exclude is None or exclude.lower() not in g.name.lower()]
+    return cands[0] if cands else None
+
+
 def target_spec(quant: str) -> ModelSpec:
-    p = Path(TARGET_MODEL_TEMPLATE["gguf_glob"].format(quant=quant))
-    return ModelSpec(TARGET_MODEL_TEMPLATE["name"], quant, p if p.exists() else None)
+    # exclude the small draft (0.5B) so we don't grab it as the target
+    p = _resolve_gguf(TARGET_MODEL_TEMPLATE["gguf_glob"], quant, exclude="0.5b")
+    return ModelSpec(TARGET_MODEL_TEMPLATE["name"], quant, p)
 
 
 def draft_spec(quant: str) -> ModelSpec:
-    p = Path(DRAFT_MODEL_TEMPLATE["gguf_glob"].format(quant=quant))
-    return ModelSpec(DRAFT_MODEL_TEMPLATE["name"], quant, p if p.exists() else None, n_ctx=4096)
+    p = _resolve_gguf(DRAFT_MODEL_TEMPLATE["gguf_glob"], quant)
+    return ModelSpec(DRAFT_MODEL_TEMPLATE["name"], quant, p, n_ctx=4096)
 
 
 # --- Speech components -------------------------------------------------------
