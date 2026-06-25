@@ -72,22 +72,24 @@ def load_ifeval_tasks() -> list[dict]:
 # --------------------------------------------------------------------------- #
 # Noise application                                                           #
 # --------------------------------------------------------------------------- #
-def noisify(text: str, wer: float, dummy: bool, asr, tts, rng) -> str:
+def noisify(text: str, wer: float, use_roundtrip: bool, asr, tts, rng) -> str:
     if wer <= 0:
         return text
-    if dummy or asr is None:
-        return synthetic_noise(text, target_wer=wer, rng=rng).noisy
-    # real ASR round-trip ignores the exact wer target (uses real TTS->ASR errors)
-    return roundtrip_noise(text, tts, asr).noisy
+    if use_roundtrip and asr is not None:
+        # most faithful: real TTS->ASR errors (slow; ignores the exact wer target)
+        return roundtrip_noise(text, tts, asr).noisy
+    # fast, controllable: inject errors to a target WER (default)
+    return synthetic_noise(text, target_wer=wer, rng=rng).noisy
 
 
 # --------------------------------------------------------------------------- #
 # Evaluation                                                                  #
 # --------------------------------------------------------------------------- #
-def eval_cell(llm, tool_tasks, ifeval_tasks, quant, wer, dummy, asr, tts, rng) -> dict:
+def eval_cell(llm, tool_tasks, ifeval_tasks, quant, wer, use_roundtrip,
+              asr, tts, rng) -> dict:
     tool_scores = {"name_match": [], "valid_json": [], "exact": []}
     for t in tool_tasks:
-        user = noisify(t["user"], wer, dummy, asr, tts, rng)
+        user = noisify(t["user"], wer, use_roundtrip, asr, tts, rng)
         out = llm.generate(TOOL_PROMPT.format(user=user), max_tokens=96).text
         sc = score_tool_call(out, t["gold"])
         for k in tool_scores:
@@ -95,7 +97,7 @@ def eval_cell(llm, tool_tasks, ifeval_tasks, quant, wer, dummy, asr, tts, rng) -
 
     ifeval_pass = []
     for t in ifeval_tasks:
-        prompt = noisify(t["prompt"], wer, dummy, asr, tts, rng)
+        prompt = noisify(t["prompt"], wer, use_roundtrip, asr, tts, rng)
         out = llm.generate(prompt, max_tokens=160).text
         ifeval_pass.append(int(check_instruction(out, t["instruction"])))
 
@@ -113,7 +115,8 @@ def eval_cell(llm, tool_tasks, ifeval_tasks, quant, wer, dummy, asr, tts, rng) -
 
 
 def run(dummy: bool, quants: list[str], seed: int = 0,
-        limit: int | None = None, noise_levels: list[float] | None = None) -> None:
+        limit: int | None = None, noise_levels: list[float] | None = None,
+        roundtrip: bool = False) -> None:
     rng = random.Random(seed)
     levels = noise_levels if noise_levels is not None else NOISE_LEVELS
     tool_tasks = load_tool_tasks()
@@ -121,8 +124,9 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
     if limit:
         tool_tasks = tool_tasks[:limit]
         ifeval_tasks = ifeval_tasks[:limit]
-    asr = build_asr(dummy) if not dummy else None
-    tts = build_tts(dummy)
+    # ASR/TTS only needed for the (slow, opt-in) roundtrip noise mode.
+    asr = build_asr(dummy) if (roundtrip and not dummy) else None
+    tts = build_tts(dummy) if roundtrip else None
     results_path = config.RESULTS_DIR / f"rq1_quality_{'dummy' if dummy else 'real'}.jsonl"
     results_path.unlink(missing_ok=True)
 
@@ -132,7 +136,7 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
         llm = build_llm(dummy, model_path=mp)
         for wer in levels:
             cell = eval_cell(llm, tool_tasks, ifeval_tasks, quant, wer,
-                             dummy, asr, tts, rng)
+                             roundtrip, asr, tts, rng)
             append_jsonl(cell, results_path)
             cells.append(cell)
             print(f"  {quant:8s} wer={wer:.2f}  name_match={cell['name_match']:.2f} "
@@ -218,9 +222,11 @@ def main() -> None:
                     help="use only the first N tasks of each set (faster first pass)")
     ap.add_argument("--noise-levels", nargs="*", type=float, default=None,
                     help="override WER levels, e.g. 0.0 0.3 for a quick 2-point sweep")
+    ap.add_argument("--roundtrip", action="store_true",
+                    help="use real TTS->ASR noise instead of fast synthetic (slow)")
     args = ap.parse_args()
     quants = args.quants or (["dummyA", "dummyB"] if args.dummy else config.QUANT_LEVELS)
-    run(args.dummy, quants, args.seed, args.limit, args.noise_levels)
+    run(args.dummy, quants, args.seed, args.limit, args.noise_levels, args.roundtrip)
 
 
 if __name__ == "__main__":
