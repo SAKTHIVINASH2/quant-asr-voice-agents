@@ -47,7 +47,8 @@ class GenResult:
 class LLM(ABC):
     @abstractmethod
     def generate(self, prompt: str, max_tokens: int = 256,
-                 stop: list[str] | None = None) -> GenResult: ...
+                 stop: list[str] | None = None,
+                 temperature: float = 0.0) -> GenResult: ...
 
     def first_sentence(self, prompt: str, max_tokens: int = 256) -> GenResult:
         """Generate only until the first sentence boundary (voice TTFS metric).
@@ -66,7 +67,8 @@ class DummyLLM(LLM):
         self.first_tok_s = first_tok_s
 
     def generate(self, prompt: str, max_tokens: int = 256,
-                 stop: list[str] | None = None) -> GenResult:
+                 stop: list[str] | None = None,
+                 temperature: float = 0.0) -> GenResult:
         canned = ("Sure, I can help with that. Let me check the details "
                   "and get back to you shortly.").split()
         t0 = now()
@@ -100,13 +102,15 @@ class LlamaCppLLM(LLM):
         )
 
     def generate(self, prompt: str, max_tokens: int = 256,
-                 stop: list[str] | None = None) -> GenResult:
+                 stop: list[str] | None = None,
+                 temperature: float = 0.0) -> GenResult:
         t0 = now()
         ttft = None
         pieces: list[str] = []
         n = 0
         stream = self.llm.create_completion(
             prompt=prompt, max_tokens=max_tokens, stop=stop or [], stream=True,
+            temperature=temperature,   # 0.0 = greedy/deterministic for eval
         )
         for chunk in stream:
             tok = chunk["choices"][0]["text"]

@@ -100,40 +100,28 @@ def noisify(text: str, wer: float, use_roundtrip: bool, asr, tts, rng) -> str:
 # --------------------------------------------------------------------------- #
 # Evaluation                                                                  #
 # --------------------------------------------------------------------------- #
-def eval_cell(llm, tool_tasks, ifeval_tasks, quant, wer, use_roundtrip,
-              asr, tts, rng, catalog) -> dict:
-    tool_scores = {"name_match": [], "valid_json": [], "exact": []}
+def eval_cell_raw(llm, tool_tasks, ifeval_tasks, wer, use_roundtrip,
+                  asr, tts, rng, catalog) -> dict:
+    """Return RAW per-task 0/1 score lists (pooled across seeds by the caller).
+    Greedy decoding (temperature=0) so the only randomness is the noise seed."""
+    raw = {"name_match": [], "valid_json": [], "exact": [], "ifeval": []}
     for t in tool_tasks:
         user = noisify(t["user"], wer, use_roundtrip, asr, tts, rng)
         out = llm.generate(TOOL_PROMPT.format(catalog=catalog, user=user),
-                           max_tokens=96).text
+                           max_tokens=96, temperature=0.0).text
         sc = score_tool_call(out, t["gold"])
-        for k in tool_scores:
-            tool_scores[k].append(int(sc[k]))
-
-    ifeval_pass = []
+        for k in ("name_match", "valid_json", "exact"):
+            raw[k].append(int(sc[k]))
     for t in ifeval_tasks:
         prompt = noisify(t["prompt"], wer, use_roundtrip, asr, tts, rng)
-        out = llm.generate(prompt, max_tokens=160).text
-        ifeval_pass.append(int(check_instruction(out, t["instruction"])))
-
-    def mean(xs):
-        return sum(xs) / len(xs) if xs else float("nan")
-
-    return {
-        "quant": quant, "wer": wer,
-        "n_tool": len(tool_tasks), "n_ifeval": len(ifeval_tasks),
-        "name_match": mean(tool_scores["name_match"]),
-        "valid_json": mean(tool_scores["valid_json"]),
-        "exact": mean(tool_scores["exact"]),
-        "ifeval": mean(ifeval_pass),
-    }
+        out = llm.generate(prompt, max_tokens=160, temperature=0.0).text
+        raw["ifeval"].append(int(check_instruction(out, t["instruction"])))
+    return raw
 
 
 def run(dummy: bool, quants: list[str], seed: int = 0,
         limit: int | None = None, noise_levels: list[float] | None = None,
-        roundtrip: bool = False) -> None:
-    rng = random.Random(seed)
+        roundtrip: bool = False, seeds: int = 1) -> None:
     levels = noise_levels if noise_levels is not None else NOISE_LEVELS
     tool_tasks = load_tool_tasks()
     ifeval_tasks = load_ifeval_tasks()
@@ -141,24 +129,38 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
     if limit:
         tool_tasks = tool_tasks[:limit]
         ifeval_tasks = ifeval_tasks[:limit]
-    # ASR/TTS only needed for the (slow, opt-in) roundtrip noise mode.
     asr = build_asr(dummy) if (roundtrip and not dummy) else None
     tts = build_tts(dummy) if roundtrip else None
     results_path = config.RESULTS_DIR / f"rq1_quality_{'dummy' if dummy else 'real'}.jsonl"
     results_path.unlink(missing_ok=True)
+    metrics = ("name_match", "valid_json", "exact", "ifeval")
 
     cells = []
     for quant in quants:
         mp = None if dummy else str(config.target_spec(quant).path)
         llm = build_llm(dummy, model_path=mp)
         for wer in levels:
-            cell = eval_cell(llm, tool_tasks, ifeval_tasks, quant, wer,
-                             roundtrip, asr, tts, rng, catalog)
+            # Greedy decoding is deterministic, so seeds only vary the noise
+            # pattern. Clean cells (wer=0) need just one seed.
+            n_seeds = 1 if wer <= 0 else seeds
+            pooled = {m: [] for m in metrics}
+            for s in range(n_seeds):
+                rng = random.Random(seed + 1000 * s)
+                raw = eval_cell_raw(llm, tool_tasks, ifeval_tasks, wer,
+                                    roundtrip, asr, tts, rng, catalog)
+                for m in metrics:
+                    pooled[m].extend(raw[m])
+            cell = {"quant": quant, "wer": wer, "seeds": n_seeds,
+                    "n_tool": len(tool_tasks), "n_ifeval": len(ifeval_tasks)}
+            for m in metrics:
+                st = summarize(pooled[m])
+                cell[m] = st["mean"]
+                cell[m + "_std"] = st.get("std", 0.0)
             append_jsonl(cell, results_path)
             cells.append(cell)
-            print(f"  {quant:8s} wer={wer:.2f}  name_match={cell['name_match']:.2f} "
-                  f"valid_json={cell['valid_json']:.2f} exact={cell['exact']:.2f} "
-                  f"ifeval={cell['ifeval']:.2f}")
+            print(f"  {quant:8s} wer={wer:.2f}  "
+                  f"name={cell['name_match']:.2f} json={cell['valid_json']:.2f} "
+                  f"exact={cell['exact']:.2f} ifeval={cell['ifeval']:.2f}")
         llm.close()
 
     _report(cells)
@@ -190,13 +192,24 @@ def _report(cells: list[dict]) -> None:
             print(f"{q:8s} {metric:11s} {clean[metric]:7.2f} {noisy[metric]:7.2f} "
                   f"{d:9.2f}")
         print()
-    # The headline: does Δ(noise) grow as quant drops?
-    print("  INTERACTION CHECK — Δ(noise) by quant (should grow if low-bit models")
+    # Main effect of quantization on CLEAN input (the most reliable signal).
+    print("  MAIN EFFECT — clean-input accuracy by quant (does quality drop as")
+    print("  bits drop, independent of noise?):")
+    clean_cells = {c["quant"]: c for c in cells if c["wer"] == 0.0}
+    for metric in ("name_match", "exact", "ifeval"):
+        seq = "  ".join(
+            f"{q}:{clean_cells[q][metric]:.2f}±{clean_cells[q].get(metric+'_std',0):.2f}"
+            for q in quants if q in clean_cells)
+        print(f"    {metric:11s} {seq}")
+    # The interaction: does Δ(noise) grow as quant drops?
+    print("\n  INTERACTION CHECK — Δ(noise) by quant (should GROW if low-bit models")
     print("  are more fragile to ASR noise):")
     for metric, pairs in interaction.items():
         seq = "  ".join(f"{q}:{d:+.2f}" for q, d in pairs)
         print(f"    {metric:11s} {seq}")
-    print("\n  (dummy numbers are placeholders — run with real GGUF models.)")
+    print("\n  Read: if MAIN EFFECT declines monotonically but INTERACTION is flat,")
+    print("  quantization hurts quality on its own but noise doesn't hit low-bit")
+    print("  models disproportionately. ±std bands that overlap = not significant.")
 
 
 def _plot(cells: list[dict]) -> None:
@@ -241,9 +254,13 @@ def main() -> None:
                     help="override WER levels, e.g. 0.0 0.3 for a quick 2-point sweep")
     ap.add_argument("--roundtrip", action="store_true",
                     help="use real TTS->ASR noise instead of fast synthetic (slow)")
+    ap.add_argument("--seeds", type=int, default=1,
+                    help="noise seeds to average per noisy cell (averages out which "
+                         "words get corrupted; clean cells always use 1)")
     args = ap.parse_args()
     quants = args.quants or (["dummyA", "dummyB"] if args.dummy else config.QUANT_LEVELS)
-    run(args.dummy, quants, args.seed, args.limit, args.noise_levels, args.roundtrip)
+    run(args.dummy, quants, args.seed, args.limit, args.noise_levels, args.roundtrip,
+        args.seeds)
 
 
 if __name__ == "__main__":
