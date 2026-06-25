@@ -68,14 +68,24 @@ class Pyttsx3TTS(TTS):
     total_s is measured honestly (single synthesis pass)."""
 
     def __init__(self) -> None:
-        import pyttsx3  # lazy import
-        self.engine = pyttsx3.init()
+        import pyttsx3  # lazy import — validate availability up front
+        self._pyttsx3 = pyttsx3
 
     def synthesize(self, text: str, out_path: str) -> TTSResult:
+        # IMPORTANT: create a FRESH engine per call. Reusing one engine across
+        # multiple runAndWait() calls hangs (a known pyttsx3/SAPI5 bug). Per-call
+        # init costs ~50-100ms (counted in total_s) but never hangs.
         t0 = now()
         sents = split_sentences(text) or [text]
-        self.engine.save_to_file(text, out_path)
-        self.engine.runAndWait()
+        engine = self._pyttsx3.init()
+        try:
+            engine.save_to_file(text, out_path)
+            engine.runAndWait()
+        finally:
+            try:
+                engine.stop()
+            except Exception:
+                pass
         total = now() - t0
         # Approximate TTFA: pyttsx3 can't stream, so scale by first-sentence length.
         frac = len(sents[0]) / max(1, len(text))
