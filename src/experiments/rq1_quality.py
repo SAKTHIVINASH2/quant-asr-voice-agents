@@ -154,7 +154,7 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
                     "n_tool": len(tool_tasks), "n_ifeval": len(ifeval_tasks)}
             for m in metrics:
                 st = summarize(pooled[m])
-                cell[m] = st["mean"]
+                cell[m] = st.get("mean", float("nan"))
                 cell[m + "_std"] = st.get("std", 0.0)
             append_jsonl(cell, results_path)
             cells.append(cell)
