@@ -100,16 +100,34 @@ def noisify(text: str, wer: float, use_roundtrip: bool, asr, tts, rng) -> str:
 # --------------------------------------------------------------------------- #
 # Evaluation                                                                  #
 # --------------------------------------------------------------------------- #
-def eval_cell_raw(llm, tool_tasks, ifeval_tasks, wer, use_roundtrip,
-                  asr, tts, rng, catalog) -> dict:
+def build_tool_items(dataset: str, limit: int | None, category: str) -> list[dict]:
+    """Normalize either dataset to items of {user, catalog, score(out)->dict}."""
+    if dataset == "bfcl":
+        from src.eval.bfcl import load_bfcl_tasks, score_bfcl
+        tasks = load_bfcl_tasks(category, limit)
+        return [{"user": t.user, "catalog": t.catalog,
+                 "score": (lambda tt: lambda out: score_bfcl(out, tt))(t)}
+                for t in tasks]
+    # curated set: global catalog, exact-match scorer
+    tool_tasks = load_tool_tasks()
+    catalog = build_catalog(tool_tasks)
+    if limit:
+        tool_tasks = tool_tasks[:limit]
+    return [{"user": t["user"], "catalog": catalog,
+             "score": (lambda g: lambda out: score_tool_call(out, g))(t["gold"])}
+            for t in tool_tasks]
+
+
+def eval_cell_raw(llm, tool_items, ifeval_tasks, wer, use_roundtrip,
+                  asr, tts, rng) -> dict:
     """Return RAW per-task 0/1 score lists (pooled across seeds by the caller).
     Greedy decoding (temperature=0) so the only randomness is the noise seed."""
     raw = {"name_match": [], "valid_json": [], "exact": [], "ifeval": []}
-    for t in tool_tasks:
-        user = noisify(t["user"], wer, use_roundtrip, asr, tts, rng)
-        out = llm.generate(TOOL_PROMPT.format(catalog=catalog, user=user),
+    for item in tool_items:
+        user = noisify(item["user"], wer, use_roundtrip, asr, tts, rng)
+        out = llm.generate(TOOL_PROMPT.format(catalog=item["catalog"], user=user),
                            max_tokens=96, temperature=0.0).text
-        sc = score_tool_call(out, t["gold"])
+        sc = item["score"](out)
         for k in ("name_match", "valid_json", "exact"):
             raw[k].append(int(sc[k]))
     for t in ifeval_tasks:
@@ -121,14 +139,15 @@ def eval_cell_raw(llm, tool_tasks, ifeval_tasks, wer, use_roundtrip,
 
 def run(dummy: bool, quants: list[str], seed: int = 0,
         limit: int | None = None, noise_levels: list[float] | None = None,
-        roundtrip: bool = False, seeds: int = 1, skip_ifeval: bool = False) -> None:
+        roundtrip: bool = False, seeds: int = 1, skip_ifeval: bool = False,
+        dataset: str = "curated", bfcl_category: str = "simple") -> None:
     levels = noise_levels if noise_levels is not None else NOISE_LEVELS
-    tool_tasks = load_tool_tasks()
+    tool_items = build_tool_items(dataset, limit, bfcl_category)
     ifeval_tasks = [] if skip_ifeval else load_ifeval_tasks()
-    catalog = build_catalog(tool_tasks)   # full catalog before limiting
     if limit:
-        tool_tasks = tool_tasks[:limit]
         ifeval_tasks = ifeval_tasks[:limit]
+    print(f"  dataset={dataset}  tool_items={len(tool_items)}  "
+          f"ifeval={len(ifeval_tasks)}")
     asr = build_asr(dummy) if (roundtrip and not dummy) else None
     tts = build_tts(dummy) if roundtrip else None
     results_path = config.RESULTS_DIR / f"rq1_quality_{'dummy' if dummy else 'real'}.jsonl"
@@ -146,12 +165,12 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
             pooled = {m: [] for m in metrics}
             for s in range(n_seeds):
                 rng = random.Random(seed + 1000 * s)
-                raw = eval_cell_raw(llm, tool_tasks, ifeval_tasks, wer,
-                                    roundtrip, asr, tts, rng, catalog)
+                raw = eval_cell_raw(llm, tool_items, ifeval_tasks, wer,
+                                    roundtrip, asr, tts, rng)
                 for m in metrics:
                     pooled[m].extend(raw[m])
             cell = {"quant": quant, "wer": wer, "seeds": n_seeds,
-                    "n_tool": len(tool_tasks), "n_ifeval": len(ifeval_tasks)}
+                    "n_tool": len(tool_items), "n_ifeval": len(ifeval_tasks)}
             for m in metrics:
                 st = summarize(pooled[m])
                 cell[m] = st.get("mean", float("nan"))
@@ -259,10 +278,14 @@ def main() -> None:
                          "words get corrupted; clean cells always use 1)")
     ap.add_argument("--skip-ifeval", action="store_true",
                     help="skip the (noisy, slow) IFEval metric; tool-calling only")
+    ap.add_argument("--dataset", choices=["curated", "bfcl"], default="curated",
+                    help="tool-calling task source (bfcl = hundreds of real items)")
+    ap.add_argument("--bfcl-category", default="simple",
+                    help="BFCL category: simple, parallel, multiple, ...")
     args = ap.parse_args()
     quants = args.quants or (["dummyA", "dummyB"] if args.dummy else config.QUANT_LEVELS)
     run(args.dummy, quants, args.seed, args.limit, args.noise_levels, args.roundtrip,
-        args.seeds, args.skip_ifeval)
+        args.seeds, args.skip_ifeval, args.dataset, args.bfcl_category)
 
 
 if __name__ == "__main__":
