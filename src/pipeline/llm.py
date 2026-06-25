@@ -30,7 +30,18 @@ class GenResult:
 
     @property
     def tokens_per_s(self) -> float:
+        """Overall throughput incl. prefill — length/prompt dependent."""
         return self.n_tokens / self.decode_s if self.decode_s > 0 else 0.0
+
+    @property
+    def decode_tps(self) -> float | None:
+        """PURE inter-token decode speed (excludes prefill/TTFT). This is the
+        length-independent metric for comparing quant levels — standard
+        llama.cpp 'eval tok/s'."""
+        gen_time = self.decode_s - self.ttft_s
+        if self.n_tokens > 1 and gen_time > 0:
+            return (self.n_tokens - 1) / gen_time
+        return None
 
 
 class LLM(ABC):

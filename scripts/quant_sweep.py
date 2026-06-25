@@ -58,6 +58,23 @@ def read_rows(quant: str, dummy: bool) -> list[dict]:
     return [json.loads(line) for line in open(path, encoding="utf-8")]
 
 
+def summarize_quant(quant: str, rows: list[dict]) -> dict:
+    dtps = [r.get("decode_tps") for r in rows if r.get("decode_tps")]
+    d_stat = summarize(dtps) if dtps else {"mean": float("nan"), "std": float("nan")}
+    return {
+        "quant": quant,
+        "n": len(rows),
+        "asr_ms": summarize([r["asr_s"] for r in rows])["mean"] * 1000,
+        "llm_ms": summarize([r["llm_decode_s"] for r in rows])["mean"] * 1000,
+        "tts_ms": summarize([r["tts_total_s"] for r in rows])["mean"] * 1000,
+        "ttfa_ms": summarize([r["ttfa_s"] for r in rows])["mean"] * 1000,
+        "total_ms": summarize([r["total_s"] for r in rows])["mean"] * 1000,
+        "decode_tps": d_stat["mean"],
+        "decode_tps_std": d_stat.get("std", float("nan")),
+        "avg_tokens": summarize([r.get("n_tokens") for r in rows])["mean"],
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quants", nargs="*", default=DEFAULT_QUANTS)
@@ -66,38 +83,34 @@ def main() -> None:
                     help="pin response length so decode time is comparable across quants")
     ap.add_argument("--dummy", action="store_true")
     ap.add_argument("--tts", default=None, help="override VA_TTS_BACKEND (e.g. pyttsx3)")
+    ap.add_argument("--trials", type=int, default=1,
+                    help="repeat the sweep N times, ROTATING quant order each trial so "
+                         "thermal drift cancels out; results are pooled per quant")
     args = ap.parse_args()
     if args.tts:
         os.environ["VA_TTS_BACKEND"] = args.tts
 
     quants = ["dummyA", "dummyB"] if args.dummy else args.quants
-    summary_rows = []
-    for q in quants:
-        print(f"\n### sweep: {q} ###")
-        mp = None
-        if not args.dummy:
-            mp = ensure_model(q)
-            if mp is None:
-                continue
-        # fresh results file per quant is handled inside rq2.run
-        rq2.run(dummy=args.dummy, quant=q, model_path=mp, n_turns=args.n_turns,
-                max_tokens=args.max_tokens)
-        rows = read_rows(q, args.dummy)
-        if not rows:
-            continue
-        tps = [r.get("toks_per_s") for r in rows if r.get("toks_per_s")]
-        summary_rows.append({
-            "quant": q,
-            "asr_ms": summarize([r["asr_s"] for r in rows])["mean"] * 1000,
-            "llm_ms": summarize([r["llm_decode_s"] for r in rows])["mean"] * 1000,
-            "tts_ms": summarize([r["tts_total_s"] for r in rows])["mean"] * 1000,
-            "ttfa_ms": summarize([r["ttfa_s"] for r in rows])["mean"] * 1000,
-            "total_ms": summarize([r["total_s"] for r in rows])["mean"] * 1000,
-            "toks_per_s": summarize(tps)["mean"] if tps else float("nan"),
-            "ms_per_tok": (1000 / summarize(tps)["mean"]) if tps else float("nan"),
-            "avg_tokens": summarize([r.get("n_tokens") for r in rows])["mean"],
-        })
+    from collections import defaultdict
+    pooled: dict[str, list] = defaultdict(list)
 
+    for t in range(args.trials):
+        # rotate order so each quant occupies a different thermal position per trial
+        order = quants[t % len(quants):] + quants[:t % len(quants)]
+        if args.trials > 1:
+            print(f"\n===== TRIAL {t+1}/{args.trials} — order: {' '.join(order)} =====")
+        for q in order:
+            print(f"\n### sweep: {q} (trial {t+1}) ###")
+            mp = None
+            if not args.dummy:
+                mp = ensure_model(q)
+                if mp is None:
+                    continue
+            rq2.run(dummy=args.dummy, quant=q, model_path=mp, n_turns=args.n_turns,
+                    max_tokens=args.max_tokens)
+            pooled[q].extend(read_rows(q, args.dummy))  # pool across trials
+
+    summary_rows = [summarize_quant(q, pooled[q]) for q in quants if pooled[q]]
     _write_and_plot(summary_rows, args.dummy)
 
 
@@ -113,14 +126,17 @@ def _write_and_plot(rows: list[dict], dummy: bool) -> None:
         w.writerows(rows)
     print(f"\nwrote {out_csv}")
 
-    print(f"\n{'quant':10s} {'tok/s':>6s} {'ms/tok':>7s} {'ASR':>7s} {'TTS':>6s} "
-          f"{'TTFA':>7s}  budget   (tok/s = the quant-comparison metric)")
+    print(f"\n{'quant':10s} {'decode tok/s (±std)':>20s} {'ASR':>7s} {'TTS':>6s} "
+          f"{'TTFA':>7s}  budget")
     for r in rows:
         flag = "OVER" if r["ttfa_ms"] > config.BUDGET_BROKEN_S * 1000 else "ok"
-        print(f"{r['quant']:10s} {r['toks_per_s']:6.1f} {r['ms_per_tok']:7.1f} "
-              f"{r['asr_ms']:6.0f}m {r['tts_ms']:5.0f}m {r['ttfa_ms']:6.0f}m  {flag}")
-    print("  NOTE: compare quants by tok/s (length-independent). Raw decode time / "
-          "TTFA still vary with\n        response length unless --max-tokens pins it.")
+        spd = f"{r['decode_tps']:.1f} ± {r['decode_tps_std']:.1f}"
+        print(f"{r['quant']:10s} {spd:>20s} {r['asr_ms']:6.0f}m {r['tts_ms']:5.0f}m "
+              f"{r['ttfa_ms']:6.0f}m  {flag}")
+    print("  decode tok/s EXCLUDES prefill (length-independent). If the ±std bands\n"
+          "  overlap across quants, the differences are NOT significant — likely\n"
+          "  thermal/system noise on a laptop, not a real quantization effect.\n"
+          "  For a clean claim: --trials N (interleaves quants to cancel thermal drift).")
 
     try:
         import matplotlib
@@ -145,13 +161,16 @@ def _write_and_plot(rows: list[dict], dummy: bool) -> None:
         plt.savefig(out_png, dpi=130)
         print(f"wrote {out_png}")
 
-        # Second figure: decode speed (tok/s) — the length-independent quant metric.
-        tps = [r["toks_per_s"] for r in rows]
+        # Second figure: pure decode speed with std error bars — so overlapping
+        # bands make non-significant quant differences visually obvious.
+        tps = [r["decode_tps"] for r in rows]
+        errs = [r.get("decode_tps_std", 0) for r in rows]
         if any(v == v for v in tps):  # not all NaN
             fig2, ax2 = plt.subplots(figsize=(6, 4))
-            ax2.bar(labels, tps, color="#C44E52")
-            ax2.set_ylabel("decode speed (tokens/sec)")
-            ax2.set_title("RQ2: decode speed vs quantization (CPU, Qwen2.5-3B)")
+            ax2.bar(labels, tps, yerr=errs, capsize=5, color="#C44E52")
+            ax2.set_ylabel("pure decode speed (tokens/sec)")
+            ax2.set_title("RQ2: decode speed vs quantization (CPU, Qwen2.5-3B)\n"
+                          "error bars = std; overlap ⇒ no significant difference")
             for i, v in enumerate(tps):
                 if v == v:
                     ax2.text(i, v, f"{v:.1f}", ha="center", va="bottom")

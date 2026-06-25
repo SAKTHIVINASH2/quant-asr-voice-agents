@@ -49,6 +49,7 @@ class TurnResult:
             "n_tokens": n_tok,
             "toks_per_s": toks_per_s,
             "ms_per_tok": ms_per_tok,
+            "decode_tps": self.gen.decode_tps if self.gen else None,
         }
 
 
