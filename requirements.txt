@@ -4,5 +4,6 @@ jiwer>=3.0          # word error rate for ASR-noise measurement
 tqdm>=4.65
 pyyaml>=6.0
 pandas>=2.0         # results aggregation
+matplotlib>=3.7     # latency plots / figures
 
 # Heavy model runtimes live in requirements-models.txt so the skeleton installs fast.
