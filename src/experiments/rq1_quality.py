@@ -125,8 +125,12 @@ def eval_cell_raw(llm, tool_items, ifeval_tasks, wer, use_roundtrip,
     raw = {"name_match": [], "valid_json": [], "exact": [], "ifeval": []}
     for item in tool_items:
         user = noisify(item["user"], wer, use_roundtrip, asr, tts, rng)
+        # Stop as soon as the JSON object is likely complete: a tool call is
+        # ~30-50 tokens, so cap low AND stop at the first blank line / fence /
+        # follow-on prose, which cuts CPU decode time ~4x vs always running 96.
         out = llm.generate(TOOL_PROMPT.format(catalog=item["catalog"], user=user),
-                           max_tokens=96, temperature=0.0).text
+                           max_tokens=64, temperature=0.0,
+                           stop=["\n\n", "```", "\nUser", "\nNote", "\nThe "]).text
         sc = item["score"](out)
         for k in ("name_match", "valid_json", "exact"):
             raw[k].append(int(sc[k]))
@@ -159,6 +163,8 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
         mp = None if dummy else str(config.target_spec(quant).path)
         llm = build_llm(dummy, model_path=mp)
         for wer in levels:
+            print(f"  ... running {quant} wer={wer:.2f} "
+                  f"({len(tool_items)} tasks) ...", flush=True)
             # Greedy decoding is deterministic, so seeds only vary the noise
             # pattern. Clean cells (wer=0) need just one seed.
             n_seeds = 1 if wer <= 0 else seeds
