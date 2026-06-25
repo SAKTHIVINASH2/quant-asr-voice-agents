@@ -21,19 +21,38 @@ class ToolCall:
     args: dict
 
 
+def _extract_json_object(text: str) -> str | None:
+    """Return the first balanced {...} object, after stripping markdown fences.
+    Robust to the ```json ... ``` wrapping and preamble that chat models add."""
+    text = re.sub(r"```(?:json)?", "", text)   # drop code fences
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        c = text[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
 def parse_tool_call(text: str) -> ToolCall | None:
-    """Extract a JSON tool call from model output. Real BFCL also supports
-    Python-AST format; this handles the common JSON case.
+    """Extract a JSON tool call from model output. Handles code fences, preamble,
+    and nested arg objects. Real BFCL also supports Python-AST format.
     TODO: use the official BFCL checker (AST + state-based) for v3 multi-turn."""
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
+    blob = _extract_json_object(text)
+    if not blob:
         return None
     try:
-        obj = json.loads(m.group(0))
+        obj = json.loads(blob)
     except json.JSONDecodeError:
         return None
-    name = obj.get("name") or obj.get("function")
-    args = obj.get("arguments") or obj.get("args") or {}
+    name = obj.get("name") or obj.get("function") or obj.get("tool")
+    args = obj.get("arguments") or obj.get("args") or obj.get("parameters") or {}
     if not name:
         return None
     return ToolCall(name, args if isinstance(args, dict) else {})

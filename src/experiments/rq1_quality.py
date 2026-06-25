@@ -40,11 +40,26 @@ from src.pipeline.tts import build_tts
 
 NOISE_LEVELS = [0.0, 0.15, 0.30]   # target WER: clean, moderate, heavy ASR noise
 
+# Filled at runtime from the task set so the model picks from KNOWN function
+# names (like real function-calling). Without this, name-matching is impossible.
 TOOL_PROMPT = (
-    "You are a function-calling assistant. Respond with ONLY a JSON object "
-    'of the form {{"name": <function_name>, "arguments": {{<args>}}}}. '
-    "No other text.\nUser: {user}\nJSON:"
+    "You are a function-calling assistant. Choose exactly one function from the "
+    "list and fill its arguments based on the user request.\n"
+    "Available functions:\n{catalog}\n"
+    'Respond with ONLY a JSON object: {{"name": <function_name>, '
+    '"arguments": {{...}}}}. No explanation, no markdown.\n'
+    "User: {user}\nJSON:"
 )
+
+
+def build_catalog(tool_tasks: list[dict]) -> str:
+    """One line per unique function: name(arg1, arg2, ...) from the gold calls."""
+    seen: dict[str, list[str]] = {}
+    for t in tool_tasks:
+        g = t["gold"]
+        if g.name not in seen:
+            seen[g.name] = list(g.args.keys())
+    return "\n".join(f"- {name}({', '.join(keys)})" for name, keys in seen.items())
 
 
 # --------------------------------------------------------------------------- #
@@ -86,11 +101,12 @@ def noisify(text: str, wer: float, use_roundtrip: bool, asr, tts, rng) -> str:
 # Evaluation                                                                  #
 # --------------------------------------------------------------------------- #
 def eval_cell(llm, tool_tasks, ifeval_tasks, quant, wer, use_roundtrip,
-              asr, tts, rng) -> dict:
+              asr, tts, rng, catalog) -> dict:
     tool_scores = {"name_match": [], "valid_json": [], "exact": []}
     for t in tool_tasks:
         user = noisify(t["user"], wer, use_roundtrip, asr, tts, rng)
-        out = llm.generate(TOOL_PROMPT.format(user=user), max_tokens=96).text
+        out = llm.generate(TOOL_PROMPT.format(catalog=catalog, user=user),
+                           max_tokens=96).text
         sc = score_tool_call(out, t["gold"])
         for k in tool_scores:
             tool_scores[k].append(int(sc[k]))
@@ -121,6 +137,7 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
     levels = noise_levels if noise_levels is not None else NOISE_LEVELS
     tool_tasks = load_tool_tasks()
     ifeval_tasks = load_ifeval_tasks()
+    catalog = build_catalog(tool_tasks)   # full catalog before limiting
     if limit:
         tool_tasks = tool_tasks[:limit]
         ifeval_tasks = ifeval_tasks[:limit]
@@ -136,7 +153,7 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
         llm = build_llm(dummy, model_path=mp)
         for wer in levels:
             cell = eval_cell(llm, tool_tasks, ifeval_tasks, quant, wer,
-                             roundtrip, asr, tts, rng)
+                             roundtrip, asr, tts, rng, catalog)
             append_jsonl(cell, results_path)
             cells.append(cell)
             print(f"  {quant:8s} wer={wer:.2f}  name_match={cell['name_match']:.2f} "
