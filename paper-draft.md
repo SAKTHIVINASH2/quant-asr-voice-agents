@@ -159,8 +159,11 @@ Tool-calling on **BFCL v3 `simple`** (function selection + AST argument match) w
 each task's own tool catalog in the prompt; greedy decoding (temperature 0) for
 determinism. **ASR noise** injected as controlled word-level corruption at target
 WER (0.0 = clean, 0.30 = heavy). Metrics: `name_match` (function selection),
-`valid_json` (format), `exact` (function + all arguments). [TODO: note synthetic-
-noise limitation + phonetic-noise future work.]
+`valid_json` (format), `exact` (function + all arguments). The noise model is
+synthetic word-level corruption (substitutions, deletions, and homophone swaps) to a
+target WER; this is a deliberate simplification — real ASR errors are phonetically
+structured — and we treat a phonetically-grounded noise model as the primary
+validity extension (§6).
 
 ## 4. Results
 
@@ -293,4 +296,6 @@ quality (the true driver of slot-filling errors).
 ## Appendix / repro
 Harness: `src/` (pipeline, eval, experiments). Run RQ2: `scripts/quant_sweep.py`;
 RQ1: `python -m src.experiments.rq1_quality --dataset bfcl ...`. All results in
-`results/`. [TODO: release repo + commit hash.]
+`results/`. Exact commands for every table are in `REPRODUCE.md`. The code and
+results in this paper are frozen at git tag `paper-v1`. [TODO: public repo URL on
+release.]
