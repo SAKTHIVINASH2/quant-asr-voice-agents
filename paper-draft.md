@@ -17,14 +17,17 @@ input compound into a quality cliff. We measure both inside a CPU ASR→LLM→TT
 pipeline. We find (1) the LLM stage dominates end-to-end latency (76–84%) and no
 quantization level meets a 1-second conversational budget — and aggressive
 quantization yields no significant *latency* benefit on CPU, where thermal
-throttling dominates bit-width; and (2) on tool-calling (BFCL, n=400), 2-bit
-quantization is statistically indistinguishable from 5-bit on both clean and
-ASR-noised input — there is no quantization main effect and no quantization×noise
-interaction. ASR noise alone roughly halves argument slot-filling accuracy,
-uniformly across quantization levels, while function selection and JSON-format
-fidelity remain robust. The practical implication is that on-device voice agents
-can be quantized aggressively with negligible tool-calling cost; the binding
-constraints are latency and ASR quality, not weight precision.
+throttling dominates bit-width; and (2) on tool-calling (BFCL, n=400, two model
+families), there is **no quantization×noise interaction** — ASR noise roughly
+halves argument slot-filling accuracy *uniformly* across quantization levels, so a
+2-bit model is no more noise-fragile than a 5-bit one. The *standalone* cost of
+2-bit quantization on clean input is model-dependent (negligible for Qwen2.5-3B,
+~15 points of exact-match for Llama-3.2-3B), but in neither case does ASR noise
+compound it. Function selection and JSON-format fidelity remain robust throughout.
+The practical implication is that the quantization and noise failure modes are
+independent: the binding constraints for on-device voice agents are latency and ASR
+quality, and quantization can be chosen on its clean-input merits without fear of a
+noise-amplified cliff.
 
 ---
 
@@ -105,20 +108,37 @@ All ±std bands overlap; the same model varies more by thermal position (Q5_K_M:
 10.0 tok/s run first vs 7.3 run last) than quants differ from each other. **No
 significant latency benefit from aggressive quantization on CPU.**
 
-### 4.2 RQ1 — no quantization×noise interaction (n=400 BFCL)
+### 4.2 RQ1 — no quantization×noise interaction (n=400 BFCL, two model families)
+
+**Qwen2.5-3B-Instruct:**
 
 | quant | name_match (clean→noisy) | exact clean | exact noisy | Δ(noise) |
 |---|---|---|---|---|
 | Q5_K_M | 0.96 → 0.96 | 0.58 | 0.29 | 0.28 |
 | Q2_K | 0.96 → 0.95 | 0.55 | 0.28 | 0.27 |
 
-Q2_K and Q5_K_M are statistically identical on every measure (differences ~0.01,
-within the ±0.03 noise floor at n=400). **No quantization main effect, no
-quant×noise interaction.** ASR noise alone roughly halves `exact` slot-filling
-(0.58→0.29) — uniformly across quant levels. `name_match` and `valid_json` stay
-~0.96 throughout. [TODO: add the 4-quant n=80 table + the methodological note that
-its apparent monotonic Δ was a sampling artifact — good rigor anecdote for
-discussion.]
+**Llama-3.2-3B-Instruct:**
+
+| quant | name_match (clean→noisy) | exact clean | exact noisy | Δ(noise) |
+|---|---|---|---|---|
+| Q5_K_M | 0.95 → 0.95 | 0.55 | 0.30 | 0.25 |
+| Q2_K | 0.86 → 0.85 | 0.40 | 0.18 | 0.21 |
+
+**No quant×noise interaction, on both models.** The noise penalty Δ does not grow
+for the 2-bit model — it is equal (Qwen: 0.28 vs 0.27) or slightly *smaller*
+(Llama: 0.25 vs 0.21, a floor effect from Llama-Q2's lower clean baseline). ASR
+noise roughly halves `exact` slot-filling uniformly across quant levels; `valid_json`
+stays ~0.97 everywhere.
+
+**The quantization *main effect* is model-dependent.** Qwen2.5-3B tolerates 2-bit
+gracefully (Q2≈Q5 on clean input). Llama-3.2-3B does not: at Q2_K, clean
+name_match drops 0.95→0.86 (−9 pts) and clean exact 0.55→0.40 (−15 pts) — both
+≈4σ at n=400, i.e. real degradation. So *how much* aggressive quantization costs
+on clean input depends on the model family, but *whether noise compounds it* does
+not — the interaction is null for both.
+
+[TODO: add the Qwen 4-quant n=80 table + the methodological note that its apparent
+monotonic Δ was a sampling artifact that vanished at n=400 — rigor anecdote for §5.]
 
 ## 5. Discussion
 
@@ -128,16 +148,26 @@ discussion.]
   argument slot-filling specifically (entity recovery), not function selection.
   Implication: invest in ASR quality / noise-robust slot extraction, not higher
   bit-width.
+- **The interaction null generalizes; the main effect does not.** Across two model
+  families the *absence* of a quant×noise interaction is consistent, but the
+  standalone clean-input cost of 2-bit differs sharply (Qwen2.5-3B robust;
+  Llama-3.2-3B loses ~15 pts exact). Practitioners should pick a quant level by
+  testing their specific model on clean input — and can then trust that ASR noise
+  won't disproportionately amplify that choice.
 - **Methodological:** decode-latency benchmarks of quantized LLMs on laptops must
   control thermal throttling; quality metrics must use greedy decoding and decompose
   Δ into clean/noisy components (an apparent n=80 interaction vanished at n=400).
 
 ## 6. Limitations
 
-Single model family (Qwen2.5-3B); single CPU; synthetic (not phonetic/real-ASR)
-noise; BFCL `simple` (single-turn, small per-task catalogs make `name_match`
-saturate); latency numbers from a thermally-variable laptop. [TODO: which to
-address pre-submission — second model (Llama-3.2-3B) is the highest value.]
+Two model families (Qwen2.5-3B, Llama-3.2-3B), both ~3B — larger/smaller scales
+untested; single CPU; **synthetic (word-level) noise rather than phonetic or
+real-ASR errors** (highest-value next step — real ASR confusions are phonetically
+structured); BFCL `simple` (single-turn, small per-task catalogs make `name_match`
+saturate; multi-turn BFCL v3 untested); latency numbers from a thermally-variable
+laptop (structure reproduces; absolute ms will not). The interaction null is shown
+for tool-calling; other capabilities (multi-turn dialogue coherence, long-context)
+are not covered.
 
 ## 7. Conclusion
 
