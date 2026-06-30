@@ -33,32 +33,103 @@ noise-amplified cliff.
 
 ## 1. Introduction
 
-[TODO: 3 paragraphs]
-- Voice agents are moving on-device for privacy/latency/cost; the standard stack is
-  streaming ASR → small LLM → streaming TTS on constrained hardware.
-- Two intuitions drive deployment decisions: "quantize to go fast/fit" and the fear
-  that "aggressive quantization + noisy speech will compound into failure." Neither
-  is measured *inside a voice pipeline on CPU*.
-- We test both. Contributions:
-  1. A CPU latency decomposition showing the LLM dominates and quantization does
-     not buy meaningful latency (RQ2).
-  2. The first measurement of quantization × ASR-noise *interaction* on tool-calling
-     in a voice context, showing the two are independent (RQ1).
-  3. An open, reproducible harness (dummy-mode + GGUF) for on-device voice-agent
-     evaluation.
+Voice assistants are increasingly being pushed onto the device rather than the
+cloud, motivated by privacy, offline availability, per-request cost, and the tight
+latency budget of natural conversation, where the gap between turns in human
+dialogue centers on roughly 200 ms and delays beyond about one second are perceived
+as broken [Stivers et al., 2009]. The dominant architecture for such systems is a
+cascade of streaming automatic speech recognition (ASR), a language model that
+interprets the request and emits a response or a tool call, and streaming
+text-to-speech (TTS), all running on constrained consumer hardware — frequently a
+commodity CPU rather than a datacenter GPU. The enabling technology for fitting a
+capable LLM into this setting is aggressive post-training quantization: GGUF
+K-quants served by `llama.cpp` routinely compress a multi-billion-parameter model to
+two-to-five effective bits per weight so that it runs at all on a laptop CPU.
+
+Two intuitions drive how practitioners configure these systems, and neither has
+been tested inside an actual voice pipeline. The first is that quantization is a
+*latency* lever — that lower bit-widths make the agent fast enough for real-time
+conversation. The second is a *fear*: aggressive quantization is known to degrade
+LLM quality, and ASR delivers noisy, error-laden transcripts to the LLM, so the two
+might *compound* into a quality cliff — a quantized model that copes with clean text
+but collapses on the garbled input a real microphone produces. This compounding
+fear is plausible precisely because the evidence base does not address it: studies
+of quantization-induced degradation are almost exclusively conducted on clean,
+written-text benchmarks and, typically, on GPUs [Lee et al., 2024; Dutta et al.,
+2024; Song et al., 2025], while evaluations of tool-calling under compression are
+likewise clean-text and GPU-bound [Dong et al., 2025]. Whether quantization and ASR
+noise interact — whether low-bit models are *disproportionately* fragile to noisy
+speech — has, to our knowledge, never been measured.
+
+We measure both intuitions directly, inside a CPU ASR→LLM→TTS pipeline, asking:
+**(RQ2)** Where does latency actually go on commodity CPU, and does aggressive
+quantization meaningfully reduce it? **(RQ1)** Does aggressive quantization degrade
+tool-calling *more* under ASR-noised input than under clean input — i.e., is there a
+quantization×noise interaction?
+
+Our findings contradict both intuitions. (1) The LLM stage dominates end-to-end
+latency (76–84%), every quantization level we test exceeds the one-second
+conversational budget, and aggressive quantization yields no statistically
+significant latency benefit on CPU, where thermal throttling dominates bit-width.
+(2) On tool-calling (BFCL, n=400, two model families), there is no quantization×noise
+interaction: ASR noise roughly halves argument slot-filling accuracy *uniformly*
+across quantization levels, so a 2-bit model is no more noise-fragile than a 5-bit
+one. The *standalone* cost of 2-bit quantization on clean input is model-dependent
+(negligible for Qwen2.5-3B, ~15 points for Llama-3.2-3B), but in neither case does
+noise compound it. The practical consequence is that the two failure modes are
+independent: practitioners can choose a quantization level on its clean-input merits
+without fear of a noise-amplified cliff, while the binding constraints — latency and
+ASR quality — lie elsewhere. We release an open, reproducible harness (with a
+model-free "dummy" mode for pipeline validation) for on-device voice-agent
+evaluation.
 
 ## 2. Related Work
 
-[Pull from literature-review.md §1–5; key anchors below]
-- **Speculative decoding / latency:** PredGen (TTFS framing), DuoDecoding (Q5_K_M CPU
-  draft), AdaSpec. We differ: fully on-CPU, latency *decomposition* not acceleration.
-- **Quantization degradation:** Lee et al. 2409.11055 (IFEval/multi-turn sensitive),
-  Dutta 2407.09141 ("accuracy is not all you need"; flips), Song 2505.15030 (4-bit
-  sweet spot, sub-4-bit collapse), Kurt 2601.14277 (GGUF K-quants). All text-only.
-- **Tool-calling under compression:** ACBench 2505.19433 (4-bit keeps tool-use 1–3%
-  but real-world agentic −10–15%), all clean text, GPU. BFCL benchmark.
-- **Gap we fill:** none evaluate quantization (a) inside a voice/ASR pipeline,
-  (b) on tool-calling under ASR noise, (c) for the quant×noise interaction, (d) on CPU.
+**On-device LLM quantization.** GGUF K-quants served by `llama.cpp` are the de-facto
+format for running LLMs on commodity CPUs, compressing weights to roughly 2.6–5.5
+effective bits. Systematic on-device evaluations identify 4-bit as a practical
+"sweet spot" — near-lossless accuracy with substantial throughput and memory savings
+— and report a sharp quality fall-off below roughly 3.5 bits per weight [Song et
+al., 2025; Kurt, 2026]. These studies establish *that* and *where* quantization
+costs accuracy, but measure it on clean, single-turn text benchmarks rather than in
+a deployed pipeline.
+
+**Quality degradation under quantization.** A line of work shows that aggregate
+accuracy understates quantization's behavioral effects: compressed models that match
+their originals on average nonetheless "flip" a meaningful fraction of individual
+answers, and degradation concentrates in specific capabilities — strict
+instruction-following and multi-turn coherence are especially sensitive, sometimes
+inverting model-size advantages [Lee et al., 2024; Dutta et al., 2024; Li et al.,
+2024]. We adopt this study's central methodological lesson — accuracy alone is
+misleading — but extend the question to a setting these works do not touch: noisy,
+spoken-language input.
+
+**Tool-calling and compression.** Function-calling is now a core capability of
+deployed agents, with the Berkeley Function-Calling Leaderboard (BFCL) providing
+AST- and state-based evaluation of tool selection and argument filling [Patil et
+al., 2024]. ACBench [Dong et al., 2025] is the closest prior work on the effect of
+compression on agentic ability, finding that 4-bit quantization preserves isolated
+tool-use to within 1–3% while degrading long-horizon agentic accuracy by 10–15%.
+Crucially, ACBench — like all the above — evaluates only clean, typed text on GPU;
+it does not consider ASR-noised input, sub-4-bit GGUF quantization, CPU deployment,
+or the noise×quantization interaction, which is precisely the gap we address.
+
+**Low-latency voice agents.** Recent systems target the conversational latency
+budget through speculative and pipeline techniques: PredGen reframes the metric
+around time-to-first-sentence and speculates during the user's speech [Li & Grover,
+2025]; DuoDecoding runs a Q5_K_M-quantized draft model on CPU alongside a GPU target
+[Lv et al., 2025]; AdaSpec adapts speculation to latency SLOs [Huang et al., 2025];
+and ChipChat demonstrates a fully on-device cascaded agent at sub-second latency on
+high-end Apple Silicon [Likhomanenko et al., 2025]. These works *accelerate*
+inference; we instead *decompose* where latency goes on commodity CPU and ask whether
+quantization is an effective latency lever there at all. Notably, the one prior data
+point on a quantized CPU draft (DuoDecoding) still pairs it with a datacenter GPU
+target and fixes the bit-width, leaving the fully-on-CPU, bit-width-swept regime
+unmeasured.
+
+**Gap.** Across these threads, no prior work evaluates quantization (a) inside a
+voice/ASR pipeline, (b) on tool-calling under ASR-style input noise, (c) for the
+quantization×noise *interaction*, or (d) on CPU. This paper addresses all four.
 
 ## 3. Method
 
@@ -178,6 +249,23 @@ latency (LLM-dominated, over budget, not helped by quantization on CPU) and ASR
 quality (the true driver of slot-filling errors).
 
 ---
+
+## References
+
+- Dong et al. (2025). *Can Compressed LLMs Truly Act? An Empirical Evaluation of Agentic Capabilities in LLM Compression* (ACBench). arXiv:2505.19433.
+- Dutta et al. (2024). *Accuracy is Not All You Need.* NeurIPS 2024. arXiv:2407.09141.
+- Huang et al. (2025). *AdaSpec: Adaptive Speculative Decoding for Fast, SLO-Aware LLM Serving.* ACM SoCC. arXiv:2503.05096.
+- Kurt (2026). *Which Quantization Should I Use? A Unified Evaluation of llama.cpp Quantization on Llama-3.1-8B-Instruct.* arXiv:2601.14277.
+- Lee et al. (2024). *A Comprehensive Evaluation of Quantized Instruction-Tuned LLMs: An Experimental Analysis up to 405B.* arXiv:2409.11055.
+- Li & Grover (2025). *PredGen: Accelerated Inference of LLMs through Input-Time Speculation for Real-Time Speech Interaction.* COLM. arXiv:2506.15556.
+- Li et al. (2024). *Evaluating Quantized Large Language Models.* ICML. arXiv:2402.18158.
+- Likhomanenko et al. (2025). *ChipChat: Low-Latency Cascaded Conversational Agent in MLX.* arXiv:2509.00078.
+- Lv et al. (2025). *DuoDecoding: Hardware-aware Heterogeneous Speculative Decoding with Dynamic Multi-Sequence Drafting.* arXiv:2503.00784.
+- Patil et al. (2024). *Berkeley Function-Calling Leaderboard (BFCL).* gorilla.cs.berkeley.edu.
+- Song et al. (2025). *A Systematic Evaluation of On-Device LLMs: Quantization, Performance, and Resources.* arXiv:2505.15030.
+- Stivers et al. (2009). *Universals and cultural variation in turn-taking in conversation.* PNAS 106(26):10587–10592.
+
+> Citation keys are author-year for the draft; convert to the venue's bib style at submission. Full per-paper notes (numbers, methods, limitations) are in `literature-review.md`.
 
 ## Appendix / repro
 Harness: `src/` (pipeline, eval, experiments). Run RQ2: `scripts/quant_sweep.py`;
