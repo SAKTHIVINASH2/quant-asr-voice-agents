@@ -134,3 +134,30 @@ The unfair advantage: this requires understanding **both** speech UX (latency bu
 - Confirm BFCL multi-turn subset size is tractable on CPU.
 - Pick the LLM-as-judge model (cost vs reliability).
 - Decide whether to include a 2-bit condition (likely collapses — but the collapse point is interesting).
+
+---
+
+## Senior-reviewer analysis (deep-research, 2026-06-30)
+
+**Verdict: workshop-ready now; one experiment from main-conference (Interspeech/ICASSP).**
+
+- **Novelty CONFIRMED un-scooped:** no 2024–26 paper measures quant-level × ASR-noise
+  interaction on tool-calling. Closest: ICINCO 2025 (Murgia, faster-whisper→4-bit GGUF
+  correction, single 4-bit, no sweep, no tools); arXiv 2605.15104 (voice tool-calling,
+  zero quantization); text-only quant×perturbation (Nature s41598-025-29770-0,
+  OpenReview QhkW8xPH1v).
+- **Top reviewer attacks:**
+  1. Synthetic word-noise is a coarse proxy — field prefers REAL-ASR-grounded:
+     MEDSAGE (arXiv 2408.14418, LLM-ICL ASR errors from real audio) and ICASSP-2024
+     lattice/word-confusion-network inputs (arXiv 2401.02921). THE decisive fix.
+  2. RQ2 "no quant speedup" tensions with arXiv 2505.06461 (Q4 DOES speed up CPU) +
+     ARM iPhone Q4 1.5-2.5x (memory-bound) + Kurt 2601.14277 (low-bit faster on CPU).
+     Null is x86-specific, valid only for Q5→Q2 PLATEAU. FIX: add Q8_0 to sweep to show
+     Q8-slow→Q4-fast→Q2-plateau curve (reconciles). Mechanism (dequant overhead, T-MAC
+     arXiv 2407.00088) established but "2-bit slower on x86" datapoints unverified.
+  3. Robustness×compression literature is SPLIT (many find quantized MORE robust) —
+     frame null as a voice-domain datapoint, NOT settled consensus.
+- **RQ2 latency direction corroborated** (telecom H100 arXiv 2508.04721: LLM 72%), but
+  GPU + meets budget; CPU over-budget regime is the novel part.
+- **Prioritized to-do:** (1) real-ASR-grounded noise = paper-v2, decisive for main conf;
+  (2) add Q8_0 to RQ2; (3) one scale axis (7B or AWQ/GPTQ); (4) reframe robustness null.
