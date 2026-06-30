@@ -134,10 +134,16 @@ quantization×noise *interaction*, or (d) on CPU. This paper addresses all four.
 ## 3. Method
 
 ### 3.1 Pipeline
-Streaming ASR (faster-whisper) → LLM (Qwen2.5-3B-Instruct, GGUF via llama.cpp,
-CPU-only) → TTS (Piper / SAPI5). Per-stage timing instrumentation captures
-time-to-first-token, time-to-first-audio, and per-stage latency. [TODO: hardware
-spec table — 8-core CPU, RAM, OS.]
+Streaming ASR (faster-whisper, `base`, INT8) → LLM (Qwen2.5-3B-Instruct and
+Llama-3.2-3B-Instruct, GGUF via `llama.cpp`, CPU-only, `n_gpu_layers=0`) → TTS
+(Piper on Linux / SAPI5 on Windows). Per-stage timing instrumentation captures
+time-to-first-token (TTFT), time-to-first-audio (TTFA), and per-stage wall time.
+
+**Hardware.** All experiments run on CPU: [TODO: exact CPU model], 8 cores,
+~7.7 GB RAM, Windows 11 (Anaconda, Python 3.13). No GPU is used at any stage.
+Absolute latencies are hardware- and thermal-dependent; the *structure* of the
+results (stage dominance, budget violation, overlapping cross-quant speed bands)
+is what reproduces.
 
 ### 3.2 Quantization levels
 GGUF K-quants: Q5_K_M, Q4_K_M, Q3_K_M, Q2_K (≈5.5 → 2.6 effective bits/weight).
@@ -179,6 +185,11 @@ All ±std bands overlap; the same model varies more by thermal position (Q5_K_M:
 10.0 tok/s run first vs 7.3 run last) than quants differ from each other. **No
 significant latency benefit from aggressive quantization on CPU.**
 
+> **Figure 1** (`results/rq2_quant_sweep.png`): stacked per-stage latency by quant
+> level with the 1 s budget line — LLM dominates, all levels over budget.
+> **Figure 2** (`results/rq2_quant_speed.png`): pure decode speed (tok/s) by quant
+> with ±std error bars — bands overlap, no significant quant effect.
+
 ### 4.2 RQ1 — no quantization×noise interaction (n=400 BFCL, two model families)
 
 **Qwen2.5-3B-Instruct:**
@@ -208,8 +219,20 @@ name_match drops 0.95→0.86 (−9 pts) and clean exact 0.55→0.40 (−15 pts) 
 on clean input depends on the model family, but *whether noise compounds it* does
 not — the interaction is null for both.
 
-[TODO: add the Qwen 4-quant n=80 table + the methodological note that its apparent
-monotonic Δ was a sampling artifact that vanished at n=400 — rigor anecdote for §5.]
+> **Figure 3** (`results/rq1_interaction.png`): tool-call accuracy vs quant level,
+> clean vs ASR-noised — the clean and noisy curves stay parallel (constant gap)
+> rather than diverging at low bits, the visual signature of a null interaction.
+
+**A cautionary intermediate result.** An earlier 4-quant Qwen sweep at n=80 produced
+an apparently *monotonic* interaction — exact Δ(noise) of 0.21, 0.26, 0.29, 0.31 for
+Q5/Q4/Q3/Q2 — that looked like clear support for the low-bit-fragility hypothesis.
+Decomposition showed it was an artifact: the noisy values had converged (Q5 and Q2
+both ≈0.34), and Q2's larger Δ rode entirely on an implausibly high *clean* baseline
+(Q2 clean exact 0.65 > Q5's 0.55) — sampling noise at n=80. Scaling to n=400 (above)
+erased the effect: clean baselines equalize and the Δ's match. We report this
+because it illustrates a methodological point (§5): interaction effects must be
+decomposed into their clean and noisy components and powered adequately, or
+proportion noise at small n masquerades as a trend.
 
 ## 5. Discussion
 
