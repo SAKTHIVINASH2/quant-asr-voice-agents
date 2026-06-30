@@ -4,7 +4,7 @@
 Draft v0.1 — 2026-06-26
 
 > Status: working draft. Numbers are from Qwen2.5-3B-Instruct (GGUF, llama.cpp)
-> on an 8-core commodity CPU. `[TODO]` marks gaps to fill before submission.
+> on a commodity laptop CPU (Intel Core i5-1135G7, 4C/8T).
 
 ---
 
@@ -139,8 +139,9 @@ Llama-3.2-3B-Instruct, GGUF via `llama.cpp`, CPU-only, `n_gpu_layers=0`) → TTS
 (Piper on Linux / SAPI5 on Windows). Per-stage timing instrumentation captures
 time-to-first-token (TTFT), time-to-first-audio (TTFA), and per-stage wall time.
 
-**Hardware.** All experiments run on CPU: [TODO: exact CPU model], 8 cores,
-~7.7 GB RAM, Windows 11 (Anaconda, Python 3.13). No GPU is used at any stage.
+**Hardware.** All experiments run on CPU: an **Intel Core i5-1135G7** (11th-gen
+"Tiger Lake", 4 cores / 8 threads, 2.4 GHz base) — a commodity ultrabook processor
+— with ≈8 GB RAM, Windows 11 (Anaconda, Python 3.13). No GPU is used at any stage.
 Absolute latencies are hardware- and thermal-dependent; the *structure* of the
 results (stage dominance, budget violation, overlapping cross-quant speed bands)
 is what reproduces.
@@ -297,5 +298,5 @@ quality (the true driver of slot-filling errors).
 Harness: `src/` (pipeline, eval, experiments). Run RQ2: `scripts/quant_sweep.py`;
 RQ1: `python -m src.experiments.rq1_quality --dataset bfcl ...`. All results in
 `results/`. Exact commands for every table are in `REPRODUCE.md`. The code and
-results in this paper are frozen at git tag `paper-v1`. [TODO: public repo URL on
-release.]
+results in this paper are frozen at git tag `paper-v1`; the repository will be made
+public on release.

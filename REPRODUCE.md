@@ -8,8 +8,9 @@ check it out to validate against the published numbers:
 git checkout paper-v1
 ```
 
-All experiments run on **CPU**. Hardware used for the paper: 8-core CPU, ~7.7 GB RAM,
-Windows 11 (Anaconda Python 3.13) / WSL2 Ubuntu. Model: Qwen2.5-3B-Instruct (GGUF).
+All experiments run on **CPU**. Hardware used for the paper: Intel Core i5-1135G7
+(4 cores / 8 threads), ≈8 GB RAM, Windows 11 (Anaconda Python 3.13) / WSL2 Ubuntu.
+Models: Qwen2.5-3B-Instruct and Llama-3.2-3B-Instruct (GGUF).
 
 ---
 
