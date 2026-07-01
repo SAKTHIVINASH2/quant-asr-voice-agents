@@ -15,9 +15,10 @@ ASR and TTS, yet two deployment fears are largely untested *together*: that
 aggressive quantization cripples the agent, and that quantization and noisy ASR
 input compound into a quality cliff. We measure both inside a CPU ASR→LLM→TTS
 pipeline. We find (1) the LLM stage dominates end-to-end latency (76–84%) and no
-quantization level meets a 1-second conversational budget — and aggressive
-quantization yields no significant *latency* benefit on CPU, where thermal
-throttling dominates bit-width; and (2) on tool-calling (BFCL, n=400, two model
+quantization level meets a 1-second conversational budget — and the CPU decode
+speedup from quantization saturates below 4-bit (8-bit→4-bit helps; further
+compression does not), with system/thermal state dominating bit-width as the driver
+of absolute latency; and (2) on tool-calling (BFCL, n=400, two model
 families), there is **no quantization×noise interaction** — ASR noise roughly
 halves argument slot-filling accuracy *uniformly* across quantization levels, so a
 2-bit model is no more noise-fragile than a 5-bit one. The *standalone* cost of
@@ -168,9 +169,9 @@ validity extension (§6).
 
 ## 4. Results
 
-### 4.1 RQ2 — the LLM dominates and quantization doesn't help latency
+### 4.1 RQ2 — the LLM dominates latency; quantization speedup saturates below 4-bit
 
-Per-stage latency (Qwen2.5-3B, CPU), mean across utterances:
+On an unloaded machine, per-stage latency (Qwen2.5-3B, CPU) is:
 
 | Stage | share |
 |---|---|
@@ -179,20 +180,30 @@ Per-stage latency (Qwen2.5-3B, CPU), mean across utterances:
 | TTS | ~2–3% |
 
 Every quantization level exceeds the 1s conversational budget (TTFA ~1.9–2.8s).
-Decode speed across quants (pure tok/s, interleaved, ±std):
 
-| Q5_K_M | Q4_K_M | Q3_K_M | Q2_K |
-|---|---|---|---|
-| 10.0±1.7 | 12.0±1.6 | 11.1±1.0 | 11.8±0.9 |
+**Quantization speedup saturates below 4-bit.** Pure decode speed (tok/s, prefill
+excluded, interleaved trials) rises from 8-bit to 4-bit and then plateaus: Q8_0 is
+consistently the slowest (~6–7 tok/s, in both trial positions, so not a thermal
+artifact), Q4_K_M is markedly faster (~9–10 tok/s), and the sub-4-bit levels
+(Q4/Q3/Q2) are mutually indistinguishable (overlapping ±std). This reconciles the
+prior finding that 4-bit accelerates CPU inference with the new observation that
+*further* compression buys nothing: **aggressive sub-4-bit quantization yields no
+additional decode speedup.** [Numbers to be reported from a single clean
+(unloaded, thermally-stable) run; the Q8→Q4→plateau ordering is consistent across
+runs.]
 
-All ±std bands overlap; the same model varies more by thermal position (Q5_K_M:
-10.0 tok/s run first vs 7.3 run last) than quants differ from each other. **No
-significant latency benefit from aggressive quantization on CPU.**
+**System state dominates bit-width.** Absolute latency is highly sensitive to
+machine load and thermal state: across runs the same Q5_K_M model ranged from ~10
+to ~6 tok/s and ASR from ~1.5 s to ~9 s depending on background load — a swing
+larger than the entire quant×speed effect. On commodity laptops, then, the dominant
+determinant of on-device latency is not the quantization level but the system's
+thermal/load state, and no quantization choice brings a 3B model within the
+conversational budget.
 
 > **Figure 1** (`results/rq2_quant_sweep.png`): stacked per-stage latency by quant
 > level with the 1 s budget line — LLM dominates, all levels over budget.
 > **Figure 2** (`results/rq2_quant_speed.png`): pure decode speed (tok/s) by quant
-> with ±std error bars — bands overlap, no significant quant effect.
+> with ±std error bars — speedup from Q8→Q4, then a sub-4-bit plateau.
 
 ### 4.2 RQ1 — no quantization×noise interaction (n=400 BFCL, two model families)
 
