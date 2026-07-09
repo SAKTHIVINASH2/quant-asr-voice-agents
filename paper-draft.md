@@ -15,10 +15,10 @@ ASR and TTS, yet two deployment fears are largely untested *together*: that
 aggressive quantization cripples the agent, and that quantization and noisy ASR
 input compound into a quality cliff. We measure both inside a CPU ASR→LLM→TTS
 pipeline. We find (1) the LLM stage dominates end-to-end latency (76–84%) and no
-quantization level meets a 1-second conversational budget — and the CPU decode
-speedup from quantization saturates below 4-bit (8-bit→4-bit helps; further
-compression does not), with system/thermal state dominating bit-width as the driver
-of absolute latency; and (2) on tool-calling (BFCL, n=400, two model
+quantization level meets a 1-second conversational budget — and quantization is not
+a reliable latency lever on CPU: decode speed varies non-monotonically with bit-width
+and the cross-quant differences are swamped by thermal/load state, which dominates as
+the driver of absolute latency; and (2) on tool-calling (BFCL, n=400, two model
 families), there is **no quantization×noise interaction** — ASR noise roughly
 halves argument slot-filling accuracy *uniformly* across quantization levels, so a
 2-bit model is no more noise-fragile than a 5-bit one. The *standalone* cost of
@@ -37,8 +37,9 @@ noise-amplified cliff.
 Voice assistants are increasingly being pushed onto the device rather than the
 cloud, motivated by privacy, offline availability, per-request cost, and the tight
 latency budget of natural conversation, where the gap between turns in human
-dialogue centers on roughly 200 ms and delays beyond about one second are perceived
-as broken [Stivers et al., 2009]. The dominant architecture for such systems is a
+dialogue centers on roughly 200 ms [Stivers et al., 2009] and delays beyond about
+one second are widely operationalized as the point at which a spoken exchange begins
+to feel broken. The dominant architecture for such systems is a
 cascade of streaming automatic speech recognition (ASR), a language model that
 interprets the request and emits a response or a tool call, and streaming
 text-to-speech (TTS), all running on constrained consumer hardware — frequently a
@@ -87,13 +88,14 @@ evaluation.
 ## 2. Related Work
 
 **On-device LLM quantization.** GGUF K-quants served by `llama.cpp` are the de-facto
-format for running LLMs on commodity CPUs, compressing weights to roughly 2.6–5.5
-effective bits. Systematic on-device evaluations identify 4-bit as a practical
-"sweet spot" — near-lossless accuracy with substantial throughput and memory savings
-— and report a sharp quality fall-off below roughly 3.5 bits per weight [Song et
-al., 2025; Kurt, 2026]. These studies establish *that* and *where* quantization
-costs accuracy, but measure it on clean, single-turn text benchmarks rather than in
-a deployed pipeline.
+format for running LLMs on commodity CPUs, compressing weights to roughly 3.1–5.7
+effective bits per weight (Q2_K–Q5_K_M, as measured by `llama.cpp`; 2.6 is Q2_K's
+nominal block value before per-tensor overhead). Systematic on-device evaluations
+identify 4-bit as a practical "sweet spot" — near-lossless accuracy with substantial
+throughput and memory savings [Song et al., 2025; Kurt, 2026] — with a sharp quality
+fall-off below roughly 3.5 bits per weight [Song et al., 2025]. These studies
+establish *that* and *where* quantization costs accuracy, but measure it on clean,
+single-turn text benchmarks rather than in a deployed pipeline.
 
 **Quality degradation under quantization.** A line of work shows that aggregate
 accuracy understates quantization's behavioral effects: compressed models that match
@@ -103,7 +105,12 @@ instruction-following and multi-turn coherence are especially sensitive, sometim
 inverting model-size advantages [Lee et al., 2024; Dutta et al., 2024; Li et al.,
 2024]. We adopt this study's central methodological lesson — accuracy alone is
 misleading — but extend the question to a setting these works do not touch: noisy,
-spoken-language input.
+spoken-language input. A separate thread asks whether compression changes a model's
+*robustness* to perturbed input rather than its clean-input accuracy: for code
+generation, Fang et al. [2025] find quantized models are typically no less robust —
+and often *more* robust — than their full-precision counterparts under adversarial
+perturbation, an early indication that quantization damage and input corruption need
+not compound. We test that hypothesis directly, for spoken input and tool-calling.
 
 **Tool-calling and compression.** Function-calling is now a core capability of
 deployed agents, with the Berkeley Function-Calling Leaderboard (BFCL) providing
@@ -113,7 +120,11 @@ compression on agentic ability, finding that 4-bit quantization preserves isolat
 tool-use to within 1–3% while degrading long-horizon agentic accuracy by 10–15%.
 Crucially, ACBench — like all the above — evaluates only clean, typed text on GPU;
 it does not consider ASR-noised input, sub-4-bit GGUF quantization, CPU deployment,
-or the noise×quantization interaction, which is precisely the gap we address.
+or the noise×quantization interaction, which is precisely the gap we address. Closer
+to the *noise* axis, AgentNoiseBench [Wang et al., 2026] benchmarks tool-using agents
+under injected user- and tool-side noise, but its perturbations are textual
+(instruction/tool-result) rather than ASR transcription errors, and it holds model
+precision fixed — leaving the quantization×noise interaction untouched.
 
 **Low-latency voice agents.** Recent systems target the conversational latency
 budget through speculative and pipeline techniques: PredGen reframes the metric
@@ -126,11 +137,23 @@ inference; we instead *decompose* where latency goes on commodity CPU and ask wh
 quantization is an effective latency lever there at all. Notably, the one prior data
 point on a quantized CPU draft (DuoDecoding) still pairs it with a datacenter GPU
 target and fixes the bit-width, leaving the fully-on-CPU, bit-width-swept regime
-unmeasured.
+unmeasured. Closest to our deployment setting, Ethiraj et al. [2025] build an
+end-to-end telecom voice agent from streaming ASR, a quantized LLM, and real-time
+TTS — but at a single fixed 4-bit precision on an NVIDIA H100 GPU, without a
+bit-width sweep, sub-4-bit GGUF, tool-calling, or any treatment of the
+quantization×noise interaction, and they report the LLM stage as the latency
+bottleneck, consistent with our CPU finding below.
 
-**Gap.** Across these threads, no prior work evaluates quantization (a) inside a
-voice/ASR pipeline, (b) on tool-calling under ASR-style input noise, (c) for the
-quantization×noise *interaction*, or (d) on CPU. This paper addresses all four.
+**Gap.** These threads each touch one axis of our setting but none combines them.
+Ethiraj et al. [2025] place a quantized LLM inside a voice/ASR pipeline, but at fixed
+4-bit precision on GPU with no tool-calling and no noise study; ACBench [Dong et al.,
+2025] measures compression against tool-calling, but on clean typed text on GPU;
+AgentNoiseBench [Wang et al., 2026] perturbs tool-using agents, but with textual
+noise at fixed precision; Fang et al. [2025] probe the quantization×robustness
+interaction, but for code generation, not speech. What remains unmeasured is their
+*conjunction*: the quantization×ASR-noise **interaction** on tool-calling, swept
+across bit-widths (including sub-4-bit GGUF), on CPU. That conjunction is what this
+paper measures.
 
 ## 3. Method
 
@@ -148,7 +171,8 @@ results (stage dominance, budget violation, overlapping cross-quant speed bands)
 is what reproduces.
 
 ### 3.2 Quantization levels
-GGUF K-quants: Q5_K_M, Q4_K_M, Q3_K_M, Q2_K (≈5.5 → 2.6 effective bits/weight).
+GGUF K-quants: Q5_K_M, Q4_K_M, Q3_K_M, Q2_K (≈5.7 → 3.1 effective bits/weight, as
+measured by `llama.cpp`; Q2_K's nominal block value is 2.6).
 
 ### 3.3 RQ2 — latency
 31 representative voice-assistant utterances; pinned response length
@@ -169,7 +193,7 @@ validity extension (§6).
 
 ## 4. Results
 
-### 4.1 RQ2 — the LLM dominates latency; quantization speedup saturates below 4-bit
+### 4.1 RQ2 — the LLM dominates latency; quantization is not a reliable CPU latency lever
 
 On an unloaded machine, per-stage latency (Qwen2.5-3B, CPU) is:
 
@@ -181,16 +205,31 @@ On an unloaded machine, per-stage latency (Qwen2.5-3B, CPU) is:
 
 Every quantization level exceeds the 1s conversational budget (TTFA ~1.9–2.8s).
 
-**Quantization speedup saturates below 4-bit.** Pure decode speed (tok/s, prefill
-excluded, interleaved trials) rises from 8-bit to 4-bit and then plateaus: Q8_0 is
-consistently the slowest (~6–7 tok/s, in both trial positions, so not a thermal
-artifact), Q4_K_M is markedly faster (~9–10 tok/s), and the sub-4-bit levels
-(Q4/Q3/Q2) are mutually indistinguishable (overlapping ±std). This reconciles the
-prior finding that 4-bit accelerates CPU inference with the new observation that
-*further* compression buys nothing: **aggressive sub-4-bit quantization yields no
-additional decode speedup.** [Numbers to be reported from a single clean
-(unloaded, thermally-stable) run; the Q8→Q4→plateau ordering is consistent across
-runs.]
+**Quantization is not a reliable latency lever.** Pure decode speed (tok/s, prefill
+excluded) does not vary monotonically with bit-width. Pooling two interleaved trials
+that rotate each quant through a different thermal position (n=20 utterances/level, a
+thermally-variable laptop under background load):
+
+| quant | eff. bits/wt (≈) | decode tok/s (mean ± std) |
+|---|---|---|
+| Q8_0 | 8.5 | 6.5 ± 1.4 |
+| Q5_K_M | 5.7 | 6.2 ± 1.8 |
+| Q4_K_M | 4.8 | 9.1 ± 1.3 |
+| Q3_K_M | 3.9 | 7.8 ± 1.1 |
+| Q2_K | 3.1 | **10.1 ± 0.9** |
+
+The two least-aggressive levels (Q8_0, Q5_K_M) are the slowest and the most
+aggressive (Q2_K) the fastest — but the relationship is not monotone (Q5_K_M is
+*slower* than the more-compressed Q4/Q3/Q2, and Q3_K_M dips below Q4_K_M), and at
+these ±std the bands overlap for every adjacent pair; only the extremes (Q2_K vs
+Q5_K_M/Q8_0) separate cleanly. The reason the middle is unstable is that per-quant
+run-to-run thermal drift is comparable to the cross-quant gaps — the same model's
+decode speed shifts by 2–3 tok/s depending on its thermal position in the interleave
+(consistent with the loaded-vs-cool swings in the next paragraph). The takeaway is
+therefore not a clean "4-bit latency sweet spot": **on a commodity CPU the
+quantization level is not a dependable knob for decode latency — system and thermal
+state dominate it, and no level comes close to the conversational budget.** Sub-4-bit
+compression saves memory, not reliable time.
 
 **System state dominates bit-width.** Absolute latency is highly sensitive to
 machine load and thermal state: across runs the same Q5_K_M model ranged from ~10
@@ -203,7 +242,9 @@ conversational budget.
 > **Figure 1** (`results/rq2_quant_sweep.png`): stacked per-stage latency by quant
 > level with the 1 s budget line — LLM dominates, all levels over budget.
 > **Figure 2** (`results/rq2_quant_speed.png`): pure decode speed (tok/s) by quant
-> with ±std error bars — speedup from Q8→Q4, then a sub-4-bit plateau.
+> with ±std error bars (n=20, two interleaved trials) — the ordering is non-monotone
+> and the bands overlap for every adjacent pair, the visual signature of thermal
+> noise dominating any bit-width effect.
 
 ### 4.2 RQ1 — no quantization×noise interaction (n=400 BFCL, two model families)
 
@@ -292,6 +333,8 @@ quality (the true driver of slot-filling errors).
 
 - Dong et al. (2025). *Can Compressed LLMs Truly Act? An Empirical Evaluation of Agentic Capabilities in LLM Compression* (ACBench). arXiv:2505.19433.
 - Dutta et al. (2024). *Accuracy is Not All You Need.* NeurIPS 2024. arXiv:2407.09141.
+- Ethiraj et al. (2025). *Toward Low-Latency End-to-End Voice Agents for Telecommunications Using Streaming ASR, Quantized LLMs, and Real-Time TTS.* arXiv:2508.04721.
+- Fang et al. (2025). *Smaller = Weaker? Benchmarking Robustness of Quantized LLMs in Code Generation.* arXiv:2506.22776.
 - Huang et al. (2025). *AdaSpec: Adaptive Speculative Decoding for Fast, SLO-Aware LLM Serving.* ACM SoCC. arXiv:2503.05096.
 - Kurt (2026). *Which Quantization Should I Use? A Unified Evaluation of llama.cpp Quantization on Llama-3.1-8B-Instruct.* arXiv:2601.14277.
 - Lee et al. (2024). *A Comprehensive Evaluation of Quantized Instruction-Tuned LLMs: An Experimental Analysis up to 405B.* arXiv:2409.11055.
@@ -302,6 +345,7 @@ quality (the true driver of slot-filling errors).
 - Patil et al. (2024). *Berkeley Function-Calling Leaderboard (BFCL).* gorilla.cs.berkeley.edu.
 - Song et al. (2025). *A Systematic Evaluation of On-Device LLMs: Quantization, Performance, and Resources.* arXiv:2505.15030.
 - Stivers et al. (2009). *Universals and cultural variation in turn-taking in conversation.* PNAS 106(26):10587–10592.
+- Wang et al. (2026). *AgentNoiseBench: Benchmarking Robustness of Tool-Using LLM Agents Under Noisy Condition.* arXiv:2602.11348.
 
 > Citation keys are author-year for the draft; convert to the venue's bib style at submission. Full per-paper notes (numbers, methods, limitations) are in `literature-review.md`.
 
