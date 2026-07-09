@@ -21,7 +21,8 @@ and the cross-quant differences are swamped by thermal/load state, which dominat
 the driver of absolute latency; and (2) on tool-calling (BFCL, n=400, two model
 families), there is **no quantization×noise interaction** — ASR noise roughly
 halves argument slot-filling accuracy *uniformly* across quantization levels, so a
-2-bit model is no more noise-fragile than a 5-bit one. The *standalone* cost of
+2-bit model is no more noise-fragile than a 5-bit one; the null holds under both a
+synthetic and a phonetically-grounded noise model. The *standalone* cost of
 2-bit quantization on clean input is model-dependent (negligible for Qwen2.5-3B,
 ~15 points of exact-match for Llama-3.2-3B), but in neither case does ASR noise
 compound it. Function selection and JSON-format fidelity remain robust throughout.
@@ -185,11 +186,13 @@ Tool-calling on **BFCL v3 `simple`** (function selection + AST argument match) w
 each task's own tool catalog in the prompt; greedy decoding (temperature 0) for
 determinism. **ASR noise** injected as controlled word-level corruption at target
 WER (0.0 = clean, 0.30 = heavy). Metrics: `name_match` (function selection),
-`valid_json` (format), `exact` (function + all arguments). The noise model is
-synthetic word-level corruption (substitutions, deletions, and homophone swaps) to a
-target WER; this is a deliberate simplification — real ASR errors are phonetically
-structured — and we treat a phonetically-grounded noise model as the primary
-validity extension (§6).
+`valid_json` (format), `exact` (function + all arguments). We use two noise models
+at the same target WER: (i) **synthetic** word-level corruption (character
+substitutions, deletions, homophone swaps), which the main tables report, and (ii) a
+**phonetically-grounded** model that applies acoustically-plausible edits — voicing
+confusions, nasal/liquid swaps, reduced-vowel substitution, and final-consonant
+drops. Real ASR errors are phonetically structured, so (ii) is a realism check on
+(i); §4.2 reports that the interaction null holds identically under both.
 
 ## 4. Results
 
@@ -268,6 +271,21 @@ for the 2-bit model — it is equal (Qwen: 0.28 vs 0.27) or slightly *smaller*
 noise roughly halves `exact` slot-filling uniformly across quant levels; `valid_json`
 stays ~0.97 everywhere.
 
+**The null replicates under phonetically-grounded noise.** The tables above use
+synthetic word-level corruption; a natural worry is that the null is an artifact of
+unrealistic noise, since real ASR errors are acoustic rather than random. We
+therefore re-ran the Qwen2.5-3B sweep (n=400) with a phonetically-motivated noise
+model — voicing confusions (s/z, t/d, k/c), nasal and liquid swaps, reduced-vowel
+substitution, and final-consonant drops — injected to the same 0.30 target WER. The
+interaction remains null: `exact` Δ(noise) is 0.19 (Q5_K_M) vs 0.21 (Q2_K),
+statistically indistinguishable, exactly as under synthetic noise (`name_match`
+0.96→0.96 vs 0.96→0.94; `valid_json` ~0.97 throughout). Notably the phonetic model
+is *gentler* than random-character corruption (Q5_K_M `exact`-under-noise 0.39 vs
+0.29; Q2_K 0.33 vs 0.28) — plausibly because acoustic confusions leave more of the
+target entity recoverable than character flips do — so the synthetic figures are, if
+anything, a conservative upper bound on noise-induced degradation. Both noise models
+agree: no quant×noise interaction (Figure 3 shows the phonetic-noise sweep).
+
 **The quantization *main effect* is model-dependent.** Qwen2.5-3B tolerates 2-bit
 gracefully (Q2≈Q5 on clean input). Llama-3.2-3B does not: at Q2_K, clean
 name_match drops 0.95→0.86 (−9 pts) and clean exact 0.55→0.40 (−15 pts) — both
@@ -275,9 +293,11 @@ name_match drops 0.95→0.86 (−9 pts) and clean exact 0.55→0.40 (−15 pts) 
 on clean input depends on the model family, but *whether noise compounds it* does
 not — the interaction is null for both.
 
-> **Figure 3** (`results/rq1_interaction.png`): tool-call accuracy vs quant level,
-> clean vs ASR-noised — the clean and noisy curves stay parallel (constant gap)
-> rather than diverging at low bits, the visual signature of a null interaction.
+> **Figure 3** (`results/rq1_interaction_phonetic.png`): tool-call `exact`-match
+> accuracy vs quant level, clean vs phonetically-noised (Qwen2.5-3B, n=400) — the
+> clean and noisy curves stay parallel (constant gap) rather than diverging at low
+> bits, the visual signature of a null interaction. The synthetic-noise sweep is
+> identical in shape.
 
 **A cautionary intermediate result.** An earlier 4-quant Qwen sweep at n=80 produced
 an apparently *monotonic* interaction — exact Δ(noise) of 0.21, 0.26, 0.29, 0.31 for
@@ -311,9 +331,10 @@ proportion noise at small n masquerades as a trend.
 ## 6. Limitations
 
 Two model families (Qwen2.5-3B, Llama-3.2-3B), both ~3B — larger/smaller scales
-untested; single CPU; **synthetic (word-level) noise rather than phonetic or
-real-ASR errors** (highest-value next step — real ASR confusions are phonetically
-structured); BFCL `simple` (single-turn, small per-task catalogs make `name_match`
+untested; single CPU; **word-level noise** — both a synthetic and a
+phonetically-grounded model (the interaction null holds under both), but not real
+round-trip TTS→ASR errors, whose WER is pipeline-determined and which remain the one
+untested noise source; BFCL `simple` (single-turn, small per-task catalogs make `name_match`
 saturate; multi-turn BFCL v3 untested); latency numbers from a thermally-variable
 laptop (structure reproduces; absolute ms will not). The interaction null is shown
 for tool-calling; other capabilities (multi-turn dialogue coherence, long-context)

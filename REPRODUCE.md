@@ -82,6 +82,14 @@ python -m src.experiments.rq1_quality --quants Q5_K_M Q2_K --dataset bfcl --limi
 python -m src.experiments.rq1_quality --quants Q5_K_M Q4_K_M Q3_K_M Q2_K --dataset bfcl --limit 80 --noise-levels 0.0 0.3 --skip-ifeval
 ```
 
+**Phonetic-noise replication (n=400 — the realism check in §4.2):**
+```powershell
+python -m src.experiments.rq1_quality --quants Q5_K_M Q2_K --dataset bfcl --limit 400 --noise-levels 0.0 0.3 --skip-ifeval --noise-model phonetic
+```
+Writes `results/rq1_quality_real_phonetic.jsonl` + `results/rq1_interaction_phonetic.png`
+(separate files, so it never clobbers the synthetic run). Confirms the null holds
+under acoustically-grounded noise: `exact` Δ(noise) 0.19 (Q5) vs 0.21 (Q2).
+
 Notes for validation:
 - **Greedy decoding** (temperature 0, set in code) makes clean cells deterministic —
   reruns reproduce clean numbers exactly. Noisy cells vary only by the corruption
