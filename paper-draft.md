@@ -1,7 +1,7 @@
 # Quantization and ASR Noise in On-Device Voice Agents: Independent, Not Compounding
 
 **B. Sakthi Vinash**
-Draft v0.1 — 2026-06-26
+Draft v0.2 — 2026-07-09
 
 > Status: working draft. Numbers are from Qwen2.5-3B-Instruct (GGUF, llama.cpp)
 > on a commodity laptop CPU (Intel Core i5-1135G7, 4C/8T).
@@ -72,8 +72,10 @@ quantization×noise interaction?
 
 Our findings contradict both intuitions. (1) The LLM stage dominates end-to-end
 latency (76–84%), every quantization level we test exceeds the one-second
-conversational budget, and aggressive quantization yields no statistically
-significant latency benefit on CPU, where thermal throttling dominates bit-width.
+conversational budget, and quantization is not a reliable latency lever on CPU:
+decode speed varies non-monotonically with bit-width and — apart from the extreme
+8-bit-versus-2-bit gap — cross-quant differences are swamped by thermal state, which
+dominates absolute latency.
 (2) On tool-calling (BFCL, n=400, two model families), there is no quantization×noise
 interaction: ASR noise roughly halves argument slot-filling accuracy *uniformly*
 across quantization levels, so a 2-bit model is no more noise-fragile than a 5-bit
@@ -168,8 +170,8 @@ time-to-first-token (TTFT), time-to-first-audio (TTFA), and per-stage wall time.
 "Tiger Lake", 4 cores / 8 threads, 2.4 GHz base) — a commodity ultrabook processor
 — with ≈8 GB RAM, Windows 11 (Anaconda, Python 3.13). No GPU is used at any stage.
 Absolute latencies are hardware- and thermal-dependent; the *structure* of the
-results (stage dominance, budget violation, overlapping cross-quant speed bands)
-is what reproduces.
+results (stage dominance, budget violation, and the absence of a reliable
+quant→latency ordering) is what reproduces.
 
 ### 3.2 Quantization levels
 GGUF K-quants: Q5_K_M, Q4_K_M, Q3_K_M, Q2_K (≈5.7 → 3.1 effective bits/weight, as
@@ -312,8 +314,8 @@ proportion noise at small n masquerades as a trend.
 
 ## 5. Discussion
 
-- **Quantization is cheap for tool-calling quality, useless for CPU latency.** The
-  two deployment levers point opposite ways from intuition.
+- **Quantization is cheap for tool-calling quality, an unreliable lever for CPU
+  latency.** The two deployment levers point opposite ways from intuition.
 - **ASR noise, not weight precision, is the quality bottleneck** — and it hits
   argument slot-filling specifically (entity recovery), not function selection.
   Implication: invest in ASR quality / noise-robust slot extraction, not higher
@@ -345,8 +347,8 @@ are not covered.
 On-device voice agents can be quantized aggressively (to 2-bit) with negligible
 tool-calling cost, clean or noisy; quantization and ASR noise degrade quality
 through independent channels, not a compounding cliff. The binding constraints are
-latency (LLM-dominated, over budget, not helped by quantization on CPU) and ASR
-quality (the true driver of slot-filling errors).
+latency (LLM-dominated, over budget, not reliably reduced by quantization on CPU)
+and ASR quality (the true driver of slot-filling errors).
 
 ---
 
