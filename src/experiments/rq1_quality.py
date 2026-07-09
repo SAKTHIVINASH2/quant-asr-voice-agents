@@ -31,7 +31,7 @@ import random
 from pathlib import Path
 
 from src import config
-from src.eval.asr_noise import synthetic_noise, roundtrip_noise
+from src.eval.asr_noise import synthetic_noise, phonetic_noise, roundtrip_noise
 from src.eval.metrics import append_jsonl, summarize
 from src.eval.scoring import ToolCall, score_tool_call, check_instruction
 from src.pipeline.asr import build_asr
@@ -87,13 +87,16 @@ def load_ifeval_tasks() -> list[dict]:
 # --------------------------------------------------------------------------- #
 # Noise application                                                           #
 # --------------------------------------------------------------------------- #
-def noisify(text: str, wer: float, use_roundtrip: bool, asr, tts, rng) -> str:
+def noisify(text: str, wer: float, noise_model: str, asr, tts, rng) -> str:
     if wer <= 0:
         return text
-    if use_roundtrip and asr is not None:
+    if noise_model == "roundtrip" and asr is not None:
         # most faithful: real TTS->ASR errors (slow; ignores the exact wer target)
         return roundtrip_noise(text, tts, asr).noisy
-    # fast, controllable: inject errors to a target WER (default)
+    if noise_model == "phonetic":
+        # acoustically-motivated corruption to a target WER (validity extension)
+        return phonetic_noise(text, target_wer=wer, rng=rng).noisy
+    # fast, controllable random corruption to a target WER (default)
     return synthetic_noise(text, target_wer=wer, rng=rng).noisy
 
 
@@ -118,13 +121,14 @@ def build_tool_items(dataset: str, limit: int | None, category: str) -> list[dic
             for t in tool_tasks]
 
 
-def eval_cell_raw(llm, tool_items, ifeval_tasks, wer, use_roundtrip,
+def eval_cell_raw(llm, tool_items, ifeval_tasks, wer, noise_model,
                   asr, tts, rng) -> dict:
     """Return RAW per-task 0/1 score lists (pooled across seeds by the caller).
     Greedy decoding (temperature=0) so the only randomness is the noise seed."""
     raw = {"name_match": [], "valid_json": [], "exact": [], "ifeval": []}
-    for item in tool_items:
-        user = noisify(item["user"], wer, use_roundtrip, asr, tts, rng)
+    n_items = len(tool_items)
+    for i, item in enumerate(tool_items, 1):
+        user = noisify(item["user"], wer, noise_model, asr, tts, rng)
         # Stop as soon as the JSON object is likely complete: a tool call is
         # ~30-50 tokens, so cap low AND stop at the first blank line / fence /
         # follow-on prose, which cuts CPU decode time ~4x vs always running 96.
@@ -134,8 +138,14 @@ def eval_cell_raw(llm, tool_items, ifeval_tasks, wer, use_roundtrip,
         sc = item["score"](out)
         for k in ("name_match", "valid_json", "exact"):
             raw[k].append(int(sc[k]))
+        # Heartbeat: without this a 400-task cell prints nothing for ~40 min and
+        # looks hung. Show a running tally + the live name-match rate every 20.
+        if i % 20 == 0 or i == n_items:
+            nm = sum(raw["name_match"]) / len(raw["name_match"])
+            print(f"      [{i}/{n_items}] tool tasks  (name_match={nm:.2f})",
+                  flush=True)
     for t in ifeval_tasks:
-        prompt = noisify(t["prompt"], wer, use_roundtrip, asr, tts, rng)
+        prompt = noisify(t["prompt"], wer, noise_model, asr, tts, rng)
         out = llm.generate(prompt, max_tokens=160, temperature=0.0).text
         raw["ifeval"].append(int(check_instruction(out, t["instruction"])))
     return raw
@@ -144,17 +154,23 @@ def eval_cell_raw(llm, tool_items, ifeval_tasks, wer, use_roundtrip,
 def run(dummy: bool, quants: list[str], seed: int = 0,
         limit: int | None = None, noise_levels: list[float] | None = None,
         roundtrip: bool = False, seeds: int = 1, skip_ifeval: bool = False,
-        dataset: str = "curated", bfcl_category: str = "simple") -> None:
+        dataset: str = "curated", bfcl_category: str = "simple",
+        noise_model: str = "synthetic") -> None:
     levels = noise_levels if noise_levels is not None else NOISE_LEVELS
+    if roundtrip:                      # --roundtrip is shorthand for the real path
+        noise_model = "roundtrip"
     tool_items = build_tool_items(dataset, limit, bfcl_category)
     ifeval_tasks = [] if skip_ifeval else load_ifeval_tasks()
     if limit:
         ifeval_tasks = ifeval_tasks[:limit]
     print(f"  dataset={dataset}  tool_items={len(tool_items)}  "
-          f"ifeval={len(ifeval_tasks)}")
-    asr = build_asr(dummy) if (roundtrip and not dummy) else None
-    tts = build_tts(dummy) if roundtrip else None
-    results_path = config.RESULTS_DIR / f"rq1_quality_{'dummy' if dummy else 'real'}.jsonl"
+          f"ifeval={len(ifeval_tasks)}  noise_model={noise_model}")
+    asr = build_asr(dummy) if (noise_model == "roundtrip" and not dummy) else None
+    tts = build_tts(dummy) if noise_model == "roundtrip" else None
+    tag = "dummy" if dummy else "real"
+    if noise_model != "synthetic":     # keep synthetic's filename; don't clobber it
+        tag += f"_{noise_model}"
+    results_path = config.RESULTS_DIR / f"rq1_quality_{tag}.jsonl"
     results_path.unlink(missing_ok=True)
     metrics = ("name_match", "valid_json", "exact", "ifeval")
 
@@ -172,7 +188,7 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
             for s in range(n_seeds):
                 rng = random.Random(seed + 1000 * s)
                 raw = eval_cell_raw(llm, tool_items, ifeval_tasks, wer,
-                                    roundtrip, asr, tts, rng)
+                                    noise_model, asr, tts, rng)
                 for m in metrics:
                     pooled[m].extend(raw[m])
             cell = {"quant": quant, "wer": wer, "seeds": n_seeds,
@@ -189,7 +205,7 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
         llm.close()
 
     _report(cells)
-    _plot(cells)
+    _plot(cells, noise_model)
 
 
 # --------------------------------------------------------------------------- #
@@ -237,7 +253,7 @@ def _report(cells: list[dict]) -> None:
     print("  models disproportionately. ±std bands that overlap = not significant.")
 
 
-def _plot(cells: list[dict]) -> None:
+def _plot(cells: list[dict], noise_model: str = "synthetic") -> None:
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -249,21 +265,27 @@ def _plot(cells: list[dict]) -> None:
     for c in cells:
         if c["quant"] not in quants:
             quants.append(c["quant"])
+    # Plot `exact` (function + all args): name_match saturates ~0.96 so it shows
+    # nothing, whereas `exact` is where ASR noise actually bites. Parallel clean
+    # and noisy curves (constant vertical gap) = the null interaction; a widening
+    # gap at low bits would be the interaction the hypothesis predicted.
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for wer in sorted({c["wer"] for c in cells}):
-        ys = [next((c["name_match"] for c in cells
+        ys = [next((c["exact"] for c in cells
                     if c["quant"] == q and c["wer"] == wer), float("nan"))
               for q in quants]
         ax.plot(quants, ys, marker="o",
-                label=f"clean" if wer == 0 else f"ASR noise (wer={wer})")
-    ax.set_ylabel("tool-call function-selection accuracy")
+                label="clean" if wer == 0 else f"ASR noise (wer={wer})")
+    ax.set_ylabel("tool-call exact-match accuracy (function + args)")
     ax.set_xlabel("quantization (more aggressive →)")
-    ax.set_title("RQ1: tool-calling accuracy vs quant, clean vs ASR-noised\n"
-                 "widening gap at low bits = the interaction effect")
+    noise_lbl = "" if noise_model == "synthetic" else f" [{noise_model} noise]"
+    ax.set_title("RQ1: tool-calling exact-match vs quant, clean vs ASR-noised"
+                 f"{noise_lbl}\nparallel curves (constant gap) = null interaction")
     ax.legend()
     ax.set_ylim(0, 1)
     plt.tight_layout()
-    out = config.RESULTS_DIR / "rq1_interaction.png"
+    suffix = "" if noise_model == "synthetic" else f"_{noise_model}"
+    out = config.RESULTS_DIR / f"rq1_interaction{suffix}.png"
     plt.savefig(out, dpi=130)
     print(f"wrote {out}")
 
@@ -277,8 +299,14 @@ def main() -> None:
                     help="use only the first N tasks of each set (faster first pass)")
     ap.add_argument("--noise-levels", nargs="*", type=float, default=None,
                     help="override WER levels, e.g. 0.0 0.3 for a quick 2-point sweep")
+    ap.add_argument("--noise-model", choices=["synthetic", "phonetic", "roundtrip"],
+                    default="synthetic",
+                    help="noise type: synthetic (random char/word), phonetic "
+                         "(acoustically-motivated, WER-controllable), or roundtrip "
+                         "(real TTS->ASR). Results/figures are written to separate "
+                         "files per model so runs don't clobber each other.")
     ap.add_argument("--roundtrip", action="store_true",
-                    help="use real TTS->ASR noise instead of fast synthetic (slow)")
+                    help="shorthand for --noise-model roundtrip (real TTS->ASR, slow)")
     ap.add_argument("--seeds", type=int, default=1,
                     help="noise seeds to average per noisy cell (averages out which "
                          "words get corrupted; clean cells always use 1)")
@@ -291,7 +319,8 @@ def main() -> None:
     args = ap.parse_args()
     quants = args.quants or (["dummyA", "dummyB"] if args.dummy else config.QUANT_LEVELS)
     run(args.dummy, quants, args.seed, args.limit, args.noise_levels, args.roundtrip,
-        args.seeds, args.skip_ifeval, args.dataset, args.bfcl_category)
+        args.seeds, args.skip_ifeval, args.dataset, args.bfcl_category,
+        args.noise_model)
 
 
 if __name__ == "__main__":
