@@ -178,10 +178,12 @@ GGUF K-quants: Q5_K_M, Q4_K_M, Q3_K_M, Q2_K (≈5.7 → 3.1 effective bits/weigh
 measured by `llama.cpp`; Q2_K's nominal block value is 2.6).
 
 ### 3.3 RQ2 — latency
-31 representative voice-assistant utterances; pinned response length
-(max_tokens=100) for cross-quant comparability; decode speed reported as pure
-inter-token tok/s (prefill excluded); interleaved trials with ±std to control for
-laptop thermal throttling.
+10 voice-assistant utterances drawn from a 31-prompt pool (commands, questions,
+tool-invoking requests, lookups), pinned response length (max_tokens=100) for
+cross-quant comparability, pooled over two interleaved trials that rotate each
+quant through a different thermal position (n=20 per quant level). Decode speed is
+reported as pure inter-token tok/s (prefill excluded) with ±std to expose thermal
+throttling.
 
 ### 3.4 RQ1 — quality under noise
 Tool-calling on **BFCL v3 `simple`** (function selection + AST argument match) with
