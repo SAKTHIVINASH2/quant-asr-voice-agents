@@ -280,20 +280,24 @@ for the 2-bit model — it is equal (Qwen: 0.28 vs 0.27) or slightly *smaller*
 noise roughly halves `exact` slot-filling uniformly across quant levels; `valid_json`
 stays ~0.97 everywhere.
 
-**The null replicates under phonetically-grounded noise.** The tables above use
-synthetic word-level corruption; a natural worry is that the null is an artifact of
-unrealistic noise, since real ASR errors are acoustic rather than random. We
-therefore re-ran the Qwen2.5-3B sweep (n=400) with a phonetically-motivated noise
+**The null replicates under phonetically-grounded noise, on both families.** The
+tables above use synthetic word-level corruption; a natural worry is that the null is
+an artifact of unrealistic noise, since real ASR errors are acoustic rather than
+random. We therefore re-ran both sweeps (n=400) with a phonetically-motivated noise
 model — voicing confusions (s/z, t/d, k/c), nasal and liquid swaps, reduced-vowel
 substitution, and final-consonant drops — injected to the same 0.30 target WER. The
-interaction remains null: `exact` Δ(noise) is 0.19 (Q5_K_M) vs 0.21 (Q2_K),
-statistically indistinguishable, exactly as under synthetic noise (`name_match`
-0.96→0.96 vs 0.96→0.94; `valid_json` ~0.97 throughout). Notably the phonetic model
-is *gentler* than random-character corruption (Q5_K_M `exact`-under-noise 0.39 vs
-0.29; Q2_K 0.33 vs 0.28) — plausibly because acoustic confusions leave more of the
-target entity recoverable than character flips do — so the synthetic figures are, if
-anything, a conservative upper bound on noise-induced degradation. Both noise models
-agree: no quant×noise interaction (Figure 4 shows the phonetic-noise sweep).
+interaction remains null on both models: `exact` Δ(noise) is 0.19 (Q5_K_M) vs 0.21
+(Q2_K) for Qwen2.5-3B and 0.16 vs 0.14 for Llama-3.2-3B — in neither case does the
+2-bit model's noise penalty exceed the 5-bit model's, exactly as under synthetic
+noise. Clean baselines reproduce, and Llama's model-specific 2-bit main effect
+persists (clean `exact` 0.55→0.40), so the phonetic model changes the noise channel
+without disturbing the standalone quantization cost. Notably the phonetic model is
+*gentler* than random-character corruption on both families (Qwen Q5_K_M
+`exact`-under-noise 0.39 vs 0.29; Llama Q5_K_M 0.39 vs 0.30) — plausibly because
+acoustic confusions leave more of the target entity recoverable than character flips
+do — so the synthetic figures are, if anything, a conservative upper bound on
+noise-induced degradation. Both noise models and both model families agree: no
+quant×noise interaction (Figure 4 shows the Qwen phonetic sweep).
 
 **The quantization *main effect* is model-dependent.** Qwen2.5-3B tolerates 2-bit
 gracefully (Q2≈Q5 on clean input). Llama-3.2-3B does not: at Q2_K, clean

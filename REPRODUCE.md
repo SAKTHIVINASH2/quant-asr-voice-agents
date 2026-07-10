@@ -84,11 +84,18 @@ python -m src.experiments.rq1_quality --quants Q5_K_M Q4_K_M Q3_K_M Q2_K --datas
 
 **Phonetic-noise replication (n=400 — the realism check in §4.2):**
 ```powershell
+# Qwen2.5-3B (default target)
 python -m src.experiments.rq1_quality --quants Q5_K_M Q2_K --dataset bfcl --limit 400 --noise-levels 0.0 0.3 --skip-ifeval --noise-model phonetic
+
+# Llama-3.2-3B: point the target at the Llama GGUFs and tag the outputs
+$env:VA_TARGET_GGUF_TMPL = "models\Llama-3.2-3B-Instruct-{quant}.gguf"
+python -m src.experiments.rq1_quality --quants Q5_K_M Q2_K --dataset bfcl --limit 400 --noise-levels 0.0 0.3 --skip-ifeval --noise-model phonetic --model-tag llama3b
+Remove-Item Env:\VA_TARGET_GGUF_TMPL   # restore Qwen default
 ```
-Writes `results/rq1_quality_real_phonetic.jsonl` + `results/rq1_interaction_phonetic.png`
-(separate files, so it never clobbers the synthetic run). Confirms the null holds
-under acoustically-grounded noise: `exact` Δ(noise) 0.19 (Q5) vs 0.21 (Q2).
+`--model-tag` keeps per-model outputs separate (`..._phonetic.jsonl` for Qwen,
+`..._phonetic_llama3b.jsonl` for Llama), so neither clobbers the other. Confirms the
+null holds under acoustically-grounded noise on **both** families: `exact` Δ(noise)
+0.19 (Q5) vs 0.21 (Q2) for Qwen; 0.16 vs 0.14 for Llama.
 
 Notes for validation:
 - **Greedy decoding** (temperature 0, set in code) makes clean cells deterministic —
