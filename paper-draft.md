@@ -385,5 +385,5 @@ and ASR quality (the true driver of slot-filling errors).
 Harness: `src/` (pipeline, eval, experiments). Run RQ2: `scripts/quant_sweep.py`;
 RQ1: `python -m src.experiments.rq1_quality --dataset bfcl ...`. All results in
 `results/`. Exact commands for every table are in `REPRODUCE.md`. The code and
-results in this paper are frozen at git tag `paper-v1`; the repository will be made
+results in this paper are frozen at git tag `paper-v2`; the repository will be made
 public on release.
