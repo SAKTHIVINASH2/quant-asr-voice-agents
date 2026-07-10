@@ -155,7 +155,7 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
         limit: int | None = None, noise_levels: list[float] | None = None,
         roundtrip: bool = False, seeds: int = 1, skip_ifeval: bool = False,
         dataset: str = "curated", bfcl_category: str = "simple",
-        noise_model: str = "synthetic") -> None:
+        noise_model: str = "synthetic", model_tag: str = "") -> None:
     levels = noise_levels if noise_levels is not None else NOISE_LEVELS
     if roundtrip:                      # --roundtrip is shorthand for the real path
         noise_model = "roundtrip"
@@ -170,6 +170,8 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
     tag = "dummy" if dummy else "real"
     if noise_model != "synthetic":     # keep synthetic's filename; don't clobber it
         tag += f"_{noise_model}"
+    if model_tag:                      # separate target models (e.g. qwen3b vs llama3b)
+        tag += f"_{model_tag}"
     results_path = config.RESULTS_DIR / f"rq1_quality_{tag}.jsonl"
     results_path.unlink(missing_ok=True)
     metrics = ("name_match", "valid_json", "exact", "ifeval")
@@ -205,7 +207,7 @@ def run(dummy: bool, quants: list[str], seed: int = 0,
         llm.close()
 
     _report(cells)
-    _plot(cells, noise_model)
+    _plot(cells, noise_model, model_tag)
 
 
 # --------------------------------------------------------------------------- #
@@ -253,7 +255,8 @@ def _report(cells: list[dict]) -> None:
     print("  models disproportionately. ±std bands that overlap = not significant.")
 
 
-def _plot(cells: list[dict], noise_model: str = "synthetic") -> None:
+def _plot(cells: list[dict], noise_model: str = "synthetic",
+          model_tag: str = "") -> None:
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -278,13 +281,16 @@ def _plot(cells: list[dict], noise_model: str = "synthetic") -> None:
                 label="clean" if wer == 0 else f"ASR noise (wer={wer})")
     ax.set_ylabel("tool-call exact-match accuracy (function + args)")
     ax.set_xlabel("quantization (more aggressive →)")
-    noise_lbl = "" if noise_model == "synthetic" else f" [{noise_model} noise]"
+    bits = [f"{noise_model} noise" if noise_model != "synthetic" else "",
+            model_tag]
+    lbl = " [" + ", ".join(b for b in bits if b) + "]" if any(bits) else ""
     ax.set_title("RQ1: tool-calling exact-match vs quant, clean vs ASR-noised"
-                 f"{noise_lbl}\nparallel curves (constant gap) = null interaction")
+                 f"{lbl}\nparallel curves (constant gap) = null interaction")
     ax.legend()
     ax.set_ylim(0, 1)
     plt.tight_layout()
-    suffix = "" if noise_model == "synthetic" else f"_{noise_model}"
+    suffix = ("" if noise_model == "synthetic" else f"_{noise_model}") + \
+             (f"_{model_tag}" if model_tag else "")
     out = config.RESULTS_DIR / f"rq1_interaction{suffix}.png"
     plt.savefig(out, dpi=130)
     print(f"wrote {out}")
@@ -316,11 +322,15 @@ def main() -> None:
                     help="tool-calling task source (bfcl = hundreds of real items)")
     ap.add_argument("--bfcl-category", default="simple",
                     help="BFCL category: simple, parallel, multiple, ...")
+    ap.add_argument("--model-tag", default="",
+                    help="label the target model in output filenames (e.g. qwen3b, "
+                         "llama3b) so different models set via VA_TARGET_GGUF_TMPL "
+                         "don't overwrite each other's results/figures")
     args = ap.parse_args()
     quants = args.quants or (["dummyA", "dummyB"] if args.dummy else config.QUANT_LEVELS)
     run(args.dummy, quants, args.seed, args.limit, args.noise_levels, args.roundtrip,
         args.seeds, args.skip_ifeval, args.dataset, args.bfcl_category,
-        args.noise_model)
+        args.noise_model, args.model_tag)
 
 
 if __name__ == "__main__":
