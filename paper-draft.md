@@ -211,6 +211,11 @@ On an unloaded machine, per-stage latency (Qwen2.5-3B, CPU) is:
 | TTS | ~2–3% |
 
 Every quantization level exceeds the 1s conversational budget (TTFA ~1.9–2.8s).
+(The per-stage shares and TTFA here are from an unloaded run; the decode-speed sweep
+below was collected in a separate session under background load, so its absolute
+ASR/LLM times are higher. We report them separately because absolute latency is
+load-dependent (§3.1), whereas the qualitative structure — LLM dominance and the
+absence of a reliable quant→latency ordering — reproduces across both.)
 
 **Quantization is not a reliable latency lever.** Pure decode speed (tok/s, prefill
 excluded) does not vary monotonically with bit-width. Pooling two interleaved trials
@@ -288,7 +293,7 @@ is *gentler* than random-character corruption (Q5_K_M `exact`-under-noise 0.39 v
 0.29; Q2_K 0.33 vs 0.28) — plausibly because acoustic confusions leave more of the
 target entity recoverable than character flips do — so the synthetic figures are, if
 anything, a conservative upper bound on noise-induced degradation. Both noise models
-agree: no quant×noise interaction (Figure 3 shows the phonetic-noise sweep).
+agree: no quant×noise interaction (Figure 4 shows the phonetic-noise sweep).
 
 **The quantization *main effect* is model-dependent.** Qwen2.5-3B tolerates 2-bit
 gracefully (Q2≈Q5 on clean input). Llama-3.2-3B does not: at Q2_K, clean
@@ -297,11 +302,13 @@ name_match drops 0.95→0.86 (−9 pts) and clean exact 0.55→0.40 (−15 pts) 
 on clean input depends on the model family, but *whether noise compounds it* does
 not — the interaction is null for both.
 
-> **Figure 3** (`results/rq1_interaction_phonetic.png`): tool-call `exact`-match
-> accuracy vs quant level, clean vs phonetically-noised (Qwen2.5-3B, n=400) — the
-> clean and noisy curves stay parallel (constant gap) rather than diverging at low
-> bits, the visual signature of a null interaction. The synthetic-noise sweep is
-> identical in shape.
+> **Figure 3** (`results/rq1_interaction.png`): tool-call `exact`-match accuracy vs
+> quant level, clean vs ASR-noised (Qwen2.5-3B, synthetic noise, n=400) — the clean
+> and noisy curves stay parallel (constant ~0.28 gap) rather than diverging at low
+> bits, the visual signature of a null interaction.
+> **Figure 4** (`results/rq1_interaction_phonetic.png`): the same sweep under
+> phonetically-grounded noise — identical parallel structure, confirming the null is
+> not an artifact of the synthetic noise model.
 
 **A cautionary intermediate result.** An earlier 4-quant Qwen sweep at n=80 produced
 an apparently *monotonic* interaction — exact Δ(noise) of 0.21, 0.26, 0.29, 0.31 for
