@@ -299,6 +299,26 @@ do — so the synthetic figures are, if anything, a conservative upper bound on
 noise-induced degradation. Both noise models and both model families agree: no
 quant×noise interaction (Figure 4 shows the Qwen phonetic sweep).
 
+**How large an interaction can we exclude?** A null is only as strong as the effect
+it can rule out, so we quantify the interaction directly as the contrast Δ(Q2) −
+Δ(Q5) — how much *more* the 2-bit model's `exact` accuracy falls under noise than the
+5-bit model's — with a 95% CI (each cell a binomial at n=400):
+
+| model / noise | Δ(Q5) | Δ(Q2) | interaction | 95% CI |
+|---|---|---|---|---|
+| Qwen2.5-3B / synthetic | 0.28 | 0.27 | −0.01 | [−0.10, +0.08] |
+| Qwen2.5-3B / phonetic | 0.19 | 0.21 | +0.02 | [−0.08, +0.12] |
+| Llama-3.2-3B / synthetic | 0.25 | 0.21 | −0.04 | [−0.13, +0.05] |
+| Llama-3.2-3B / phonetic | 0.16 | 0.14 | −0.02 | [−0.11, +0.07] |
+
+Across all four model × noise-model combinations the interaction sits within ±0.04 of
+zero, and every CI contains zero while excluding any interaction larger than ~0.13
+exact-match points. The null is therefore a *bounded equivalence* result — we can
+rule out, at 95% confidence, any noise×quantization interaction beyond ~0.1 — not
+merely a failure to reach significance. The interval is conservative: it treats the
+clean and noisy cells as independent, whereas they are paired on the same 400 tasks,
+so the true interval is tighter (`scripts/interaction_ci.py` reproduces it).
+
 **The quantization *main effect* is model-dependent.** Qwen2.5-3B tolerates 2-bit
 gracefully (Q2≈Q5 on clean input). Llama-3.2-3B does not: at Q2_K, clean
 name_match drops 0.95→0.86 (−9 pts) and clean exact 0.55→0.40 (−15 pts) — both
@@ -341,7 +361,9 @@ proportion noise at small n masquerades as a trend.
   won't disproportionately amplify that choice.
 - **Methodological:** decode-latency benchmarks of quantized LLMs on laptops must
   control thermal throttling; quality metrics must use greedy decoding and decompose
-  Δ into clean/noisy components (an apparent n=80 interaction vanished at n=400).
+  Δ into clean/noisy components (an apparent n=80 interaction vanished at n=400); and
+  a claimed null interaction should be reported as a CI / equivalence bound (what
+  effect size can we *exclude*?), not just a non-significant point estimate.
 
 ## 6. Limitations
 
