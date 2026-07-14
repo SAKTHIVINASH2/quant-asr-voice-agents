@@ -1,35 +1,38 @@
 # Quantization and ASR Noise in On-Device Voice Agents: Independent, Not Compounding
 
 **B. Sakthi Vinash**
-Draft v0.2 — 2026-07-09
+⟨affiliation — fill⟩ · ⟨contact email — fill⟩
+Preprint — 2026-07-14
 
-> Status: working draft. Numbers are from Qwen2.5-3B-Instruct (GGUF, llama.cpp)
-> on a commodity laptop CPU (Intel Core i5-1135G7, 4C/8T).
+**Keywords:** on-device LLMs · post-training quantization · speech-recognition noise ·
+tool-calling / function-calling · voice agents · efficient inference · llama.cpp
+
+> Reproducible harness (with a model-free "dummy" mode) at ⟨repo URL — fill on release⟩.
+> Numbers are from Qwen2.5-3B-Instruct and Llama-3.2-3B-Instruct (GGUF, llama.cpp) on a
+> commodity laptop CPU (Intel Core i5-1135G7, 4C/8T).
 
 ---
 
 ## Abstract
 
 On-device voice assistants increasingly pair a small quantized LLM with streaming
-ASR and TTS, yet two deployment fears are largely untested *together*: that
-aggressive quantization cripples the agent, and that quantization and noisy ASR
-input compound into a quality cliff. We measure both inside a CPU ASR→LLM→TTS
-pipeline. We find (1) the LLM stage dominates end-to-end latency (76–84%) and no
-quantization level meets a 1-second conversational budget — and quantization is not
-a reliable latency lever on CPU: decode speed varies non-monotonically with bit-width
-and the cross-quant differences are swamped by thermal/load state, which dominates as
-the driver of absolute latency; and (2) on tool-calling (BFCL, n=400, two model
-families), there is **no quantization×noise interaction** — ASR noise roughly
-halves argument slot-filling accuracy *uniformly* across quantization levels, so a
-2-bit model is no more noise-fragile than a 5-bit one; the null holds under both a
-synthetic and a phonetically-grounded noise model. The *standalone* cost of
-2-bit quantization on clean input is model-dependent (negligible for Qwen2.5-3B,
-~15 points of exact-match for Llama-3.2-3B), but in neither case does ASR noise
-compound it. Function selection and JSON-format fidelity remain robust throughout.
-The practical implication is that the quantization and noise failure modes are
-independent: the binding constraints for on-device voice agents are latency and ASR
-quality, and quantization can be chosen on its clean-input merits without fear of a
-noise-amplified cliff.
+ASR and TTS, yet two deployment fears remain untested *together*: that aggressive
+quantization cripples the agent, and that quantization and noisy ASR input compound
+into a quality cliff. We measure both inside a CPU ASR→LLM→TTS pipeline. First, the
+LLM stage dominates end-to-end latency (76–84%), no quantization level meets a
+one-second conversational budget, and quantization is not a reliable latency lever on
+CPU — decode speed varies non-monotonically with bit-width and is swamped by
+thermal/load state. Second, on tool-calling (BFCL, n=400, two model families), there
+is **no quantization×noise interaction**: ASR noise roughly halves argument
+slot-filling accuracy *uniformly* across bit-widths, and a conservative 95% CI
+excludes any interaction larger than ~0.1 exact-match. This null holds under both a
+synthetic and a phonetically-grounded noise model, on both families. The *standalone*
+cost of 2-bit quantization on clean input is model-dependent (negligible for
+Qwen2.5-3B, ~15 exact-match points for Llama-3.2-3B), but ASR noise never compounds
+it; function selection and JSON-format fidelity stay robust throughout. The failure
+modes are thus independent: quantization can be chosen on its clean-input merits
+without fear of a noise-amplified cliff, while the binding constraints are latency and
+ASR quality. We release a reproducible evaluation harness for on-device voice agents.
 
 ---
 
