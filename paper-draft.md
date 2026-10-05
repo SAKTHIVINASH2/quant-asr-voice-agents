@@ -2,7 +2,7 @@
 
 **B. Sakthi Vinash**
 ⟨affiliation — fill⟩ · ⟨contact email — fill⟩
-Preprint — 2026-07-14
+Preprint — 2026-10-05
 
 **Keywords:** on-device LLMs · post-training quantization · speech-recognition noise ·
 tool-calling / function-calling · voice agents · efficient inference · llama.cpp
@@ -63,7 +63,9 @@ fear is plausible precisely because the evidence base does not address it: studi
 of quantization-induced degradation are almost exclusively conducted on clean,
 written-text benchmarks and, typically, on GPUs [Lee et al., 2024; Dutta et al.,
 2024; Song et al., 2025], while evaluations of tool-calling under compression are
-likewise clean-text and GPU-bound [Dong et al., 2025]. Whether quantization and ASR
+likewise clean-text and GPU-bound [Dong et al., 2025; Jang et al., 2026], and recent
+spoken tool-calling benchmarks hold weight precision fixed [Laskar et al., 2026; Peng
+et al., 2026]. Whether quantization and ASR
 noise interact — whether low-bit models are *disproportionately* fragile to noisy
 speech — has, to our knowledge, never been measured.
 
@@ -109,7 +111,10 @@ their originals on average nonetheless "flip" a meaningful fraction of individua
 answers, and degradation concentrates in specific capabilities — strict
 instruction-following and multi-turn coherence are especially sensitive, sometimes
 inverting model-size advantages [Lee et al., 2024; Dutta et al., 2024; Li et al.,
-2024]. We adopt this study's central methodological lesson — accuracy alone is
+2024]. The same masking appears in agents: on τ²-bench, Jang et al. [2026] find
+4-bit quantization leaves task scores flat while amplifying pre-existing failures —
+chiefly tool-name hallucination — by up to 2.5×, the extra errors absorbed by the
+benchmark's error budget. We adopt this central methodological lesson — accuracy alone is
 misleading — but extend the question to a setting these works do not touch: noisy,
 spoken-language input. A separate thread asks whether compression changes a model's
 *robustness* to perturbed input rather than its clean-input accuracy: for code
@@ -131,6 +136,16 @@ to the *noise* axis, AgentNoiseBench [Wang et al., 2026] benchmarks tool-using a
 under injected user- and tool-side noise, but its perturbations are textual
 (instruction/tool-result) rather than ASR transcription errors, and it holds model
 precision fixed — leaving the quantization×noise interaction untouched.
+
+**Spoken tool-calling.** Tool-calling from speech has recently become a benchmark
+target in its own right. Laskar et al. [2026] convert text tool-calling benchmarks
+(Confetti, When2Call) to audio via TTS with speaker variation and environmental
+noise, and find that the text-to-voice gap in speech-native models mostly reflects
+misunderstood *argument values* — the same slot-filling channel we find ASR noise
+attacks. SFC-Bench [Peng et al., 2026] reframes spoken language understanding as
+spoken function calling for LLMs and audio-language models. Both evaluate
+full-precision (largely cloud or GPU-served) models; neither varies weight precision,
+so neither can observe a quantization×noise interaction.
 
 **Low-latency voice agents.** Recent systems target the conversational latency
 budget through speculative and pipeline techniques: PredGen reframes the metric
@@ -155,8 +170,13 @@ Ethiraj et al. [2025] place a quantized LLM inside a voice/ASR pipeline, but at 
 4-bit precision on GPU with no tool-calling and no noise study; ACBench [Dong et al.,
 2025] measures compression against tool-calling, but on clean typed text on GPU;
 AgentNoiseBench [Wang et al., 2026] perturbs tool-using agents, but with textual
-noise at fixed precision; Fang et al. [2025] probe the quantization×robustness
-interaction, but for code generation, not speech. What remains unmeasured is their
+noise at fixed precision; Jang et al. [2026] show quantization silently amplifies
+tool-calling failures, but on clean text; Laskar et al. [2026] and SFC-Bench [Peng et
+al., 2026] evaluate tool-calling from speech, but at full precision; Fang et al.
+[2025] probe the quantization×robustness interaction, but for code generation, not
+speech. We therefore do not claim that quantization damage can hide behind flat
+scores — that is established — nor that speech degrades tool-calling. What remains
+unmeasured is their
 *conjunction*: the quantization×ASR-noise **interaction** on tool-calling, swept
 across bit-widths (including sub-4-bit GGUF), on CPU. That conjunction is what this
 paper measures.
@@ -359,7 +379,12 @@ proportion noise at small n masquerades as a trend.
 - **The interaction null generalizes; the main effect does not.** Across two model
   families the *absence* of a quant×noise interaction is consistent, but the
   standalone clean-input cost of 2-bit differs sharply (Qwen2.5-3B robust;
-  Llama-3.2-3B loses ~15 pts exact). Practitioners should pick a quant level by
+  Llama-3.2-3B loses ~15 pts exact). Llama's loss includes a 9-pt drop in function
+  selection (name_match 0.95→0.86), in line with the tool-name hallucination Jang et
+  al. [2026] find quantization amplifies on τ²-bench; Qwen shows no such drop, so
+  that effect too is model-dependent. The two results are complementary:
+  quantization can amplify a model's existing tool-calling failures, but ASR noise
+  does not amplify them further. Practitioners should pick a quant level by
   testing their specific model on clean input — and can then trust that ASR noise
   won't disproportionately amplify that choice.
 - **Methodological:** decode-latency benchmarks of quantized LLMs on laptops must
@@ -397,13 +422,16 @@ and ASR quality (the true driver of slot-filling errors).
 - Ethiraj et al. (2025). *Toward Low-Latency End-to-End Voice Agents for Telecommunications Using Streaming ASR, Quantized LLMs, and Real-Time TTS.* arXiv:2508.04721.
 - Fang et al. (2025). *Smaller = Weaker? Benchmarking Robustness of Quantized LLMs in Code Generation.* arXiv:2506.22776.
 - Huang et al. (2025). *AdaSpec: Adaptive Speculative Decoding for Fast, SLO-Aware LLM Serving.* ACM SoCC. arXiv:2503.05096.
+- Jang et al. (2026). *Flat Score, Amplified Failures: How the Error Budget Masks Damage in Quantized LLM Agents.* arXiv:2607.27275.
 - Kurt (2026). *Which Quantization Should I Use? A Unified Evaluation of llama.cpp Quantization on Llama-3.1-8B-Instruct.* arXiv:2601.14277.
+- Laskar et al. (2026). *From Text to Voice: A Reproducible and Verifiable Framework for Evaluating Tool Calling LLM Agents.* arXiv:2605.15104.
 - Lee et al. (2024). *A Comprehensive Evaluation of Quantized Instruction-Tuned LLMs: An Experimental Analysis up to 405B.* arXiv:2409.11055.
 - Li & Grover (2025). *PredGen: Accelerated Inference of LLMs through Input-Time Speculation for Real-Time Speech Interaction.* COLM. arXiv:2506.15556.
 - Li et al. (2024). *Evaluating Quantized Large Language Models.* ICML. arXiv:2402.18158.
 - Likhomanenko et al. (2025). *ChipChat: Low-Latency Cascaded Conversational Agent in MLX.* arXiv:2509.00078.
 - Lv et al. (2025). *DuoDecoding: Hardware-aware Heterogeneous Speculative Decoding with Dynamic Multi-Sequence Drafting.* arXiv:2503.00784.
 - Patil et al. (2024). *Berkeley Function-Calling Leaderboard (BFCL).* gorilla.cs.berkeley.edu.
+- Peng et al. (2026). *Spoken Function Calling: A New Perspective on Spoken Language Understanding for Large Audio Language Models.* arXiv:2608.05126.
 - Song et al. (2025). *A Systematic Evaluation of On-Device LLMs: Quantization, Performance, and Resources.* arXiv:2505.15030.
 - Stivers et al. (2009). *Universals and cultural variation in turn-taking in conversation.* PNAS 106(26):10587–10592.
 - Wang et al. (2026). *AgentNoiseBench: Benchmarking Robustness of Tool-Using LLM Agents Under Noisy Condition.* arXiv:2602.11348.
@@ -414,5 +442,5 @@ and ASR quality (the true driver of slot-filling errors).
 Harness: `src/` (pipeline, eval, experiments). Run RQ2: `scripts/quant_sweep.py`;
 RQ1: `python -m src.experiments.rq1_quality --dataset bfcl ...`. All results in
 `results/`. Exact commands for every table are in `REPRODUCE.md`. The code and
-results in this paper are frozen at git tag `paper-v2`; the repository will be made
+results in this paper are frozen at git tag `paper-v3`; the repository will be made
 public on release.
