@@ -1,5 +1,7 @@
 # Quantization and ASR Noise in On-Device Voice Agents: Independent, Not Compounding
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24495020.svg)](https://doi.org/10.5281/zenodo.24495020)
+
 Code, data and results for the paper by **Sakthivinash Balu** (Independent Researcher, ORCID [0009-0009-4091-9795](https://orcid.org/0009-0009-4091-9795)).
 
 > Does aggressive LLM quantization make a voice agent's tool-calling *more fragile*
@@ -10,6 +12,7 @@ Code, data and results for the paper by **Sakthivinash Balu** (Independent Resea
 > ~0.13. The finding replicates under two noise models (random-character and phonetic).
 > On CPU, the LLM dominates turn latency, and decode speed is not monotone in bit-width.
 
+- **Preprint (Zenodo):** [doi:10.5281/zenodo.24495020](https://doi.org/10.5281/zenodo.24495020)
 - **Paper:** [`paper.tex`](paper.tex) (LaTeX) · [`paper-draft.md`](paper-draft.md) (Markdown)
 - **Reproduce every number:** [`REPRODUCE.md`](REPRODUCE.md)
 - **Background:** [`literature-review.md`](literature-review.md), [`research-proposal.md`](research-proposal.md)
@@ -50,6 +53,9 @@ Models (`models/`, ~14 GB of GGUF files) are not included; see `REPRODUCE.md`.
   author = {Balu, Sakthivinash},
   title  = {Quantization and {ASR} Noise in On-Device Voice Agents: Independent, Not Compounding},
   year   = {2026},
+  publisher = {Zenodo},
+  doi    = {10.5281/zenodo.24495020},
+  url    = {https://doi.org/10.5281/zenodo.24495020},
   note   = {Preprint}
 }
 ```
