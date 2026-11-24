@@ -1,6 +1,6 @@
 # Quantization and ASR Noise in On-Device Voice Agents: Independent, Not Compounding
 
-Code, data and results for the paper by **Sakthivinash Balu** (Independent Researcher).
+Code, data and results for the paper by **Sakthivinash Balu** (Independent Researcher, ORCID [0009-0009-4091-9795](https://orcid.org/0009-0009-4091-9795)).
 
 > Does aggressive LLM quantization make a voice agent's tool-calling *more fragile*
 > to speech-recognition errors? **No.** On BFCL (n=400) with Qwen2.5-3B and
