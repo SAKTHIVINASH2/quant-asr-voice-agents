@@ -1,64 +1,60 @@
-# Quantization × Latency in On-Device Voice Agents
+# Quantization and ASR Noise in On-Device Voice Agents: Independent, Not Compounding
 
-Research code for measuring how aggressive quantization and latency-optimization
-interact in an on-device (CPU) ASR → LLM → TTS voice pipeline.
+Code, data and results for the paper by **Sakthivinash Balu** (Independent Researcher).
 
-**Companion docs:** `research-proposal.md`, `literature-review.md`
+> Does aggressive LLM quantization make a voice agent's tool-calling *more fragile*
+> to speech-recognition errors? **No.** On BFCL (n=400) with Qwen2.5-3B and
+> Llama-3.2-3B GGUF models on CPU, ASR noise roughly halves exact argument
+> slot-filling *uniformly* across bit-widths (Q5_K_M vs Q2_K); the quantization × noise
+> interaction stays within ±0.04, and every 95% CI excludes an interaction larger than
+> ~0.13. The finding replicates under two noise models (random-character and phonetic).
+> On CPU, the LLM dominates turn latency, and decode speed is not monotone in bit-width.
 
-## Research questions
-- **RQ1** — Does quantization break tool-calling + multi-turn coherence *worse* on
-  ASR-noised input than on clean text?  (`src/experiments/rq1_quality.py`)
-- **RQ2** — Where does latency actually go on CPU — LLM or TTS?  (`src/experiments/rq2_latency.py`)
-- **RQ3** — How does quantizing the *draft* model affect speculative-decoding
-  acceptance rate and TTFT on CPU?  (`src/experiments/rq3_specdec.py`)
+- **Paper:** [`paper.tex`](paper.tex) (LaTeX) · [`paper-draft.md`](paper-draft.md) (Markdown)
+- **Reproduce every number:** [`REPRODUCE.md`](REPRODUCE.md)
+- **Background:** [`literature-review.md`](literature-review.md), [`research-proposal.md`](research-proposal.md)
 
-## Quickstart (no downloads — verify the plumbing first)
+## Quickstart (no model downloads)
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt          # core only; heavy deps are optional extras
-
-# Everything runs in DUMMY mode with zero model downloads:
+pip install -r requirements.txt
+python -m src.experiments.rq1_quality --dummy
 python -m src.experiments.rq2_latency --dummy
-python -m src.experiments.rq1_quality  --dummy
-python -m src.experiments.rq3_specdec  --dummy
 ```
 
-Dummy components sleep for realistic durations and return canned outputs, so you can
-confirm the full pipeline, timing instrumentation, and results files work before
-touching real models.
-
-## Running for real
-
-1. Install the heavy optional deps:
-   ```bash
-   pip install -r requirements-models.txt
-   ```
-2. Download models (see `scripts/download_models.sh`): GGUF LLMs at several quant
-   levels, a faster-whisper model, and a Piper voice.
-3. Point `src/config.py` (or `--config`) at the model paths.
-4. Drop `--dummy` from the commands above.
-
-## Colab
-
-Open `notebooks/colab_runner.ipynb` (or paste `scripts/colab_setup.sh` into a cell).
-The same modules run unchanged; Colab just provides the pip installs and a place to
-mount Drive for caching models.
+Dummy mode checks the whole pipeline with canned components. For real runs install
+`requirements-models.txt`, download GGUF models (`scripts/download_models.sh`), and
+follow `REPRODUCE.md`.
 
 ## Layout
 
 ```
+paper.tex, paper-draft.md   the paper
 src/
-  config.py            # model registry, quant levels, paths — EDIT THIS
-  pipeline/            # the voice agent: asr.py, llm.py, tts.py, voice_agent.py
-  eval/                # asr_noise.py, metrics.py, scoring.py
-  experiments/         # rq1_quality.py, rq2_latency.py, rq3_specdec.py
-results/               # JSONL/CSV outputs (gitignored)
-data/                  # datasets: BFCL, MT-Bench, IFEval (gitignored)
-scripts/               # download_models.sh, colab_setup.sh
+  pipeline/                 ASR → LLM → TTS voice agent (faster-whisper, llama.cpp, Piper)
+  eval/                     ASR-noise models, BFCL loader, scoring
+  experiments/              rq1_quality.py (quant × noise), rq2_latency.py, rq3_specdec.py
+scripts/                    model download, quant sweep, plots, interaction CIs
+data/                       BFCL v3 simple subset + curated task sets
+results/                    raw JSONL/CSV results and the paper's figures
+notebooks/                  Windows / Colab / local runners
 ```
 
-## Status / TODO
-Search the tree for `TODO:` — the pipeline + timing + RQ2 are runnable; RQ1 scoring
-(BFCL state-based, MT-Bench judge) and RQ3 acceptance-rate readout have clearly
-marked extension points.
+Models (`models/`, ~14 GB of GGUF files) are not included; see `REPRODUCE.md`.
+
+## Citation
+
+```bibtex
+@misc{balu2026quantasr,
+  author = {Balu, Sakthivinash},
+  title  = {Quantization and {ASR} Noise in On-Device Voice Agents: Independent, Not Compounding},
+  year   = {2026},
+  note   = {Preprint}
+}
+```
+
+## License
+
+Code: MIT (see [`LICENSE`](LICENSE)). Paper text and figures: CC BY 4.0.
+`data/bfcl/` is from the Berkeley Function-Calling Leaderboard (Apache-2.0).

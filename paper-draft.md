@@ -1,6 +1,6 @@
 # Quantization and ASR Noise in On-Device Voice Agents: Independent, Not Compounding
 
-**B. Sakthi Vinash**
+**Sakthivinash Balu**
 ⟨affiliation — fill⟩ · ⟨contact email — fill⟩
 Preprint — 2026-10-05
 

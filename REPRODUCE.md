@@ -1,11 +1,11 @@
 # Reproducing the Results
 
 This document lists the **exact commands** used to generate every result in
-`paper-draft.md`. The code is frozen at git tag **`paper-v1`** (commit `ecf6ca3`) —
+`paper-draft.md`. The code is frozen at git tag **`paper-v3`** —
 check it out to validate against the published numbers:
 
 ```bash
-git checkout paper-v1
+git checkout paper-v3
 ```
 
 All experiments run on **CPU**. Hardware used for the paper: Intel Core i5-1135G7

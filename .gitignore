@@ -8,8 +8,7 @@ data/*                     # ignore data CONTENTS but allow re-including files b
 *.onnx.json
 *.wav
 
-# Results (regenerated)
-results/
+# Results ARE committed: they back the paper's figures and tables
 
 # Python
 __pycache__/
@@ -29,3 +28,7 @@ paper.pdf
 *.aux
 *.log
 *.out
+
+# Local agent tooling
+.claude/
+.claude-flow/

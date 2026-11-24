@@ -1,0 +1,2 @@
+{"draft_quant": "dummyA", "ttft_s": 0.12030831733621501, "decode_s": 0.6039467560040066, "tokens_per_s": 28.14818143243465, "acceptance_rate": 0.7, "n_draft": 100, "n_accept": 70, "target_quant": "dummy"}
+{"draft_quant": "dummyB", "ttft_s": 0.12015758266594882, "decode_s": 0.6033146533300169, "tokens_per_s": 28.1777141698565, "acceptance_rate": 0.5, "n_draft": 100, "n_accept": 50, "target_quant": "dummy"}
